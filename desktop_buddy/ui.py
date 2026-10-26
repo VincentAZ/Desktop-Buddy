@@ -439,7 +439,7 @@ class BuddyApp(Gtk.Application):
 
     def ensure_backends(self):
         from .desktop import LazyBackend
-        if not self.desktop:self.desktop=LazyBackend(lambda:Portal(self.window_handle))
+        if not self.desktop:self.desktop=LazyBackend(lambda:Portal(self.window_handle,self.store.get('desktop_restore_token',''),lambda value:self.store.set('desktop_restore_token',value)))
         if not self.a11y:self.a11y=LazyBackend(Accessibility)
 
     def approve(self,name,detail,token):
@@ -450,7 +450,7 @@ class BuddyApp(Gtk.Application):
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=16)
             for side in ('top','bottom','start','end'):getattr(box,'set_margin_'+side)(24)
             dialog.set_child(box)
-            names={'shell.run':'Run a command','desktop.input':'Control the desktop','desktop.accessible_action':'Use an application control',
+            names={'shell.run':'Run a command','desktop.connect':'Connect screen sharing and desktop control','desktop.input':'Control the desktop','desktop.accessible_action':'Use an application control',
                 'desktop.window':'Control a window','browser.navigate':'Open a web page','browser.action':'Interact with a web page',
                 'app.launch':'Open an application','http.request':'Send an HTTP request','memory.set':'Save a memory',
                 'comfyui.run':'Create images','comfyui.run_batch':'Create a batch of images','comfyui.cancel':'Cancel a ComfyUI job','Cloud data disclosure':'Send this task to a cloud model'}
@@ -602,7 +602,7 @@ class BuddyApp(Gtk.Application):
         return token
 
     def connect_desktop(self):
-        self.status.set_text('Accept the GNOME screen-sharing and remote-control dialog to connect.')
+        self.status.set_text('Look for the GNOME “share your screen” dialog, which may be on another monitor, and click Share. Waiting up to 2 minutes.')
         def work(t):
             self.ensure_backends();result=self.desktop.connect(t);self.emit('result',result);self.emit('status','Desktop connected through GNOME consent')
         self.auxiliary(work)

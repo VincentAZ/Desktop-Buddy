@@ -225,6 +225,7 @@ class Registry:
         a('memory.read','Inspect explicit long-term user preferences, separate from conversation history.',{},[],lambda x,t:self.store.memory())
         a('memory.set','Update a named long-term preference after user approval. Do not store secrets.',{'key':S,'value':S},['key','value'],self.memory_set,True,'sensitive')
         a('http.request','Make one HTTP(S) request with approval, no redirects or ambient credentials. Use direct APIs for LM Studio/Ollama/ComfyUI. Disabled in local-only tasks.',{'url':S,'method':{'type':'string','enum':['GET','POST','PUT','DELETE']},'body':{'type':'object'}},['url'],self.http,True,'http')
+        a('desktop.connect','Connect screen sharing and remote control through GNOME. Required once before desktop.input; the user clicks Share in a GNOME dialog and the grant is remembered for next time. Screenshots and accessibility do not need it.',{},[],self.connect,True,'desktop_input')
         a('desktop.screenshot','Capture the physical desktop through GNOME consent. Returns local PNG and dimensions. Compare hashes or use vision to verify.',{},[],self.screenshot)
         a('desktop.accessibility','Inspect accessible applications, windows and controls via AT-SPI. Paths are ephemeral: refresh before acting.',{'app':S,'window':S,'depth':I,'limit':I},[],self.a11y)
         a('desktop.input','Send pointer/key actions to the shared physical monitor. Coordinates use logical_size. Every action needs approval; observe afterwards.',{'action':{'type':'string','enum':['move','click','scroll','key','type','drag']},'x':N,'y':N,'to_x':N,'to_y':N,'button':{'type':'string','enum':['left','right','middle']},'double':B,'axis':I,'steps':I,'keys':S,'text':S},['action'],self.input,True,'desktop_input')
@@ -314,6 +315,10 @@ class Registry:
                     t.check();im.save(out);os.chmod(out,0o600)
                     return {'path':str(out),'source':str(p),'original_size':original,'width':im.width,'height':im.height}
         finally:os.close(parent)
+
+    def connect(self,x,t):
+        if not self.desktop:raise RuntimeError('Desktop portal backend is unavailable.')
+        return self.desktop.connect(t)
 
     def screenshot(self,x,t):
         if not self.desktop:raise RuntimeError('Desktop portal backend is unavailable.')

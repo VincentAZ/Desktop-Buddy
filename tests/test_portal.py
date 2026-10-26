@@ -26,4 +26,28 @@ class PortalInputTests(unittest.TestCase):
   with self.assertRaises(DesktopError):p.move(4,4,StopToken())
   self.assertFalse(p.events)
 
+class PortalConnectTests(unittest.TestCase):
+ def portal(self,restore_token=''):
+  import gi
+  from gi.repository import GLib
+  p=object.__new__(Portal);p.GLib=GLib;p.session=None;p.stream=None;p.size=None;p.closed_subscription=None
+  p.parent_window='';p.restore_token=restore_token;p.saved=[];p.save_token=p.saved.append;p.requests=[]
+  p.on_loop=lambda func:1
+  def request(interface,method,signature,args,options,token,timeout=120):
+   p.requests.append((interface,method,{k:v.unpack() for k,v in options.items()}))
+   if method=='CreateSession':return {'session_handle':'/s/1'}
+   if method=='Start':return {'streams':[(7,{'logical_size':(1920,1080)})],'devices':3,'restore_token':'tok-new'}
+   return {}
+  p.request=request
+  return p
+ def test_first_connect_asks_gnome_to_remember_and_stores_token(self):
+  p=self.portal();result=p._connect(StopToken())
+  devices=next(o for i,m,o in p.requests if m=='SelectDevices')
+  self.assertEqual(devices['persist_mode'],2);self.assertNotIn('restore_token',devices)
+  self.assertEqual(p.saved,['tok-new']);self.assertTrue(result['remembered']);self.assertEqual(p.stream,7)
+ def test_reconnect_sends_remembered_token(self):
+  p=self.portal('tok-old');p._connect(StopToken())
+  devices=next(o for i,m,o in p.requests if m=='SelectDevices')
+  self.assertEqual(devices['restore_token'],'tok-old');self.assertEqual(p.saved,['tok-new'])
+
 if __name__=='__main__':unittest.main()

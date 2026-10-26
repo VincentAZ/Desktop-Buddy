@@ -33,8 +33,10 @@ class LazyBackend:
 class Portal:
     DEST='org.freedesktop.portal.Desktop'
     PATH='/org/freedesktop/portal/desktop'
-    def __init__(self,parent_window=''):
+    def __init__(self,parent_window='',restore_token='',save_token=None):
         self.parent_window=parent_window
+        # GNOME can remember the screen-sharing grant; the token is stored by the app.
+        self.restore_token=restore_token;self.save_token=save_token
         self.operation_lock=threading.Lock()
         import gi
         gi.require_version('Gio','2.0')
@@ -86,7 +88,7 @@ class Portal:
             until=time.monotonic()+timeout
             while not done.wait(.05):
                 token.check()
-                if time.monotonic()>until:raise DesktopError('GNOME consent dialog timed out. Retry when at the desktop.')
+                if time.monotonic()>until:raise DesktopError('GNOME asked for permission to share your screen, but nobody clicked Share within 2 minutes. The dialog may be on another monitor. Try again when you can see it.')
             code,data=result[0]
             if code==1:raise DesktopError('Desktop permission was cancelled by the user.')
             if code!=0:raise DesktopError('GNOME could not create this desktop session. Unlock the workstation, focus Desktop Buddy, and retry. No restrictions were changed.')
@@ -116,18 +118,24 @@ class Portal:
         result=self.request('RemoteDesktop','CreateSession','(a{sv})',(),{'session_handle_token':G.Variant('s','buddy_'+uuid.uuid4().hex)},token)
         session=result['session_handle'];self.session=session
         try:
-            self.request('RemoteDesktop','SelectDevices','(oa{sv})',(session,),{'types':G.Variant('u',3)},token)
+            devices={'types':G.Variant('u',3),'persist_mode':G.Variant('u',2)}
+            if self.restore_token:devices['restore_token']=G.Variant('s',self.restore_token)
+            self.request('RemoteDesktop','SelectDevices','(oa{sv})',(session,),devices,token)
             self.request('ScreenCast','SelectSources','(oa{sv})',(session,),{'types':G.Variant('u',1),'multiple':G.Variant('b',False),'cursor_mode':G.Variant('u',2)},token)
             started=self.request('RemoteDesktop','Start','(osa{sv})',(session,self.parent_window),{},token)
             streams=started.get('streams',[])
             if not streams:raise DesktopError('No screen stream was granted.')
             if int(started.get('devices',0)) & 3 != 3:raise DesktopError('GNOME did not grant keyboard and pointer access.')
             self.stream=int(streams[0][0]);props=streams[0][1]
+            remembered=started.get('restore_token','')
+            if remembered and remembered!=self.restore_token:
+                self.restore_token=remembered
+                if self.save_token:self.save_token(remembered)
             self.size=props.get('logical_size') or props.get('size')
             token.check()
             if self.session!=session:raise Cancelled('Desktop connection stopped.')
             self.closed_subscription=self.on_loop(lambda:self.bus.signal_subscribe(self.DEST,'org.freedesktop.portal.Session','Closed',session,None,self.Gio.DBusSignalFlags.NONE,self._closed,None))
-            return {'connected':True,'stream':self.stream,'logical_size':self.size,'source':'GNOME consent portal'}
+            return {'connected':True,'stream':self.stream,'logical_size':self.size,'source':'GNOME consent portal','remembered':bool(remembered)}
         except Exception:
             self.close();raise
 
@@ -202,7 +210,7 @@ class Portal:
         self.call('RemoteDesktop',method,'(oa{sv}'+signature+')',(self.session,{},*args))
 
     def move(self,x,y,token):
-        if not self.stream:raise DesktopError('No granted screen stream.')
+        if not self.stream:raise DesktopError('Desktop control is not connected. Run desktop.connect first; the user clicks Share in the GNOME dialog once and it is remembered.')
         if x<0 or y<0 or (self.size and (x>=self.size[0] or y>=self.size[1])):raise DesktopError('Coordinates are outside the shared monitor logical size.')
         self.notify('NotifyPointerMotionAbsolute','udd',(self.stream,float(x),float(y)),token)
 
