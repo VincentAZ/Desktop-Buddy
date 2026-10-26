@@ -16,6 +16,7 @@ from .agent import Agent
 from .browser import Browser
 from .desktop import Portal,Accessibility
 from .providers import Provider
+from . import __version__
 from .security import Policy,Redactor,StopToken,Cancelled
 from .state import Store,Credentials,PROVIDERS,thinking_levels
 from .tools import Registry
@@ -70,7 +71,7 @@ class BuddyApp(Gtk.Application):
         if not display:raise RuntimeError('No physical desktop display. Launch inside the GNOME session.')
         Gtk.Settings.get_default().set_property('gtk-application-prefer-dark-theme',False)
         css=Gtk.CssProvider();css.load_from_data(CSS.encode());Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        self.window=Gtk.ApplicationWindow(application=self,title='Desktop Buddy',default_width=self.store.get('window_width',1180),default_height=self.store.get('window_height',860))
+        self.window=Gtk.ApplicationWindow(application=self,title='Desktop Buddy v'+__version__,default_width=self.store.get('window_width',1180),default_height=self.store.get('window_height',860))
         self.window.connect('close-request',self.close_requested)
         default = default_workspace(self.data_dir)
         default.mkdir(parents=True,exist_ok=True)
@@ -100,7 +101,6 @@ class BuddyApp(Gtk.Application):
 
     def provider_changed(self,*_):
         pid=self.selected_id();self.store.set('provider',pid);c=self.store.configs()[pid]
-        self.model_label.set_text(f'{c.model} · {PROVIDERS[pid][0]}' if c.model else 'No model selected')
         self.refresh_thinking_selector(c)
         self.update_model_hint()
         self.update_disclosure()
@@ -133,27 +133,8 @@ class BuddyApp(Gtk.Application):
 
 
     def refresh_thinking_selector(self, config=None):
-        if not hasattr(self,'thinking_selector'):return
-        config = config or self.store.configs()[self.selected_id()]
-        choices = thinking_levels(config.id, config.model)
-        self.setting_thinking = True
-        self.thinking_values = [wire for _title, wire in choices]
-        self.thinking_selector.set_model(Gtk.StringList.new([title for title, _wire in choices]))
-        try:index = self.thinking_values.index(config.reasoning)
-        except ValueError:index = 0
-        self.thinking_selector.set_selected(index)
-        self.thinking_selector.set_sensitive(bool(config.model))
-        self.setting_thinking = False
-
-    def thinking_changed(self,*_):
-        if getattr(self,'setting_thinking',False):return
-        selected=self.thinking_selector.get_selected()
-        if selected >= len(getattr(self,'thinking_values',[])):return
-        config=self.store.configs()[self.selected_id()]
-        if not config.model:return
-        config.reasoning=self.thinking_values[selected]
-        self.store.save_config(config)
-        self.update_model_hint()
+        """The model button shows model + thinking level and owns the menu to change both."""
+        if getattr(self,'model_menu',None):self.model_menu.refresh()
 
     def update_model_hint(self):
         if not hasattr(self,'model_hint'):return
@@ -161,8 +142,8 @@ class BuddyApp(Gtk.Application):
         if active:
             selected=self.store.configs()[self.selected_id()]
             different=(active.id,active.model)!=(selected.id,selected.model)
-            text=f'Running with {active.model} · selection applies to your next message.' if different else 'Task running · you can choose the model for your next message.'
-        else:text='These options apply to your next message.'
+            text=f'Right now Buddy is using {active.model}. Your new choice is used from your next message.' if different else 'Buddy keeps using this for the current task. Changes apply to your next message.'
+        else:text=''
         self.model_hint.set_text(text)
 
     def select_model(self,config):
@@ -347,10 +328,8 @@ class BuddyApp(Gtk.Application):
 
     def model_dialog(self):
         if not any(c.model for c in self.store.configs().values()):return self.providers_dialog()
-        from .model_ui import ModelPicker
-        picker=ModelPicker(self)
-        picker.window.controller=picker
-        return picker.window
+        self.model_menu.popover.popup()
+        return self.model_menu.popover
 
     def refresh_history(self):
         while self.history.get_first_child():self.history.remove(self.history.get_first_child())
@@ -528,9 +507,9 @@ class BuddyApp(Gtk.Application):
             self.pending[:]=[(e,d) for e,d in self.pending if e is not done]
 
     def send(self,prompt=None):
-        if self.worker and self.worker.is_alive():self.notice('A task is still stopping or running. Wait for it to finish.');return
         prompt=prompt or content(self.input).strip()
         if not prompt:return
+        if self.worker and self.worker.is_alive():return self.send_during_task(prompt)
         if self.emergency_latched:
             self.emergency_latched=False;self.status.set_text('New user request resets the stop latch; desktop permission must be reconnected.')
         self.save_preferences();config=self.store.configs()[self.selected_id()]
@@ -538,7 +517,7 @@ class BuddyApp(Gtk.Application):
         if self.local.get_active() and not config.local:self.notice('Offline mode is on. Open Task options (the gear beside Send) and turn off Keep Buddy offline to use this online model.');return
         if self.pending_images and not config.use_vision:self.notice('Images are turned off for this model. Enable images in Advanced settings, choose another model, or remove the attachment.');return
         workspace=Path(self.workspace.get_text()).expanduser().resolve()
-        if not workspace.is_dir():self.notice('Choose an existing folder in Task options before sending.');return
+        if not workspace.is_dir():self.notice(f'The working folder {workspace} does not exist. Open Task options (the gear beside Send) and choose an existing folder under “Folder Buddy can work in”.');return
         images=list(self.pending_images)
         if not self.store.messages(self.cid):
             with self.store.lock,self.store.db:self.store.db.execute('UPDATE conversations SET title=? WHERE id=?',(self.redactor.text(' '.join(prompt.split()))[:80],self.cid))
@@ -555,7 +534,8 @@ class BuddyApp(Gtk.Application):
         self.task_usage={};self.usage.set_text('')
         self.cancel_button.set_visible(True)
         self.recovery_button.set_visible(False);self.spinner.start();self.status.set_text('Getting started…')
-        self.run_button.set_sensitive(False);self.history.set_sensitive(False);self.workspace.set_sensitive(False);self.start_token=StopToken();self.agent=None
+        # Send stays enabled: messages typed during a task are delivered at its next step.
+        self.history.set_sensitive(False);self.workspace.set_sensitive(False);self.start_token=StopToken();self.agent=None
         mode=self.selected_mode();local=self.local.get_active();cid=self.cid
         self.active_model=config;self.update_model_hint()
         def work():
@@ -576,6 +556,20 @@ class BuddyApp(Gtk.Application):
                 self.store.checkpoint(tid,cid,'failed',{})
                 self.emit('error',str(e));self.emit('done',{'status':'failed'})
         self.worker=threading.Thread(target=work,daemon=True,name='agent-task');self.worker.start()
+
+    def send_during_task(self,prompt):
+        """Hand a message to the running task without stopping it."""
+        agent=self.agent
+        if not agent or agent.conversation_id!=self.cid:
+            self.notice('Buddy is still starting this task. Try again in a moment, or press Stop.');return
+        images=list(self.pending_images)
+        if images and self.active_model and not self.active_model.use_vision:
+            self.notice('The model running this task cannot see images. Remove the attachment or wait for the task to finish.');return
+        agent.say(prompt,images)
+        self.input.get_buffer().set_text('');self.save_draft();self.clear_attachments(False)
+        self.append('YOU',prompt)
+        for image in images:self.append_image(image)
+        self.status.set_text('Message received · Buddy reads it before its next step (a running command is not interrupted; press Stop to cancel it).')
 
     def resume(self):
         tasks=self.store.tasks(self.cid)
@@ -719,9 +713,9 @@ class BuddyApp(Gtk.Application):
         d=Gtk.Window(title='Desktop observation · local image',application=self,transient_for=self.window,default_width=1000,default_height=700)
         picture=Gtk.Picture.new_for_filename(str(path));picture.set_can_shrink(True);picture.set_content_fit(Gtk.ContentFit.CONTAIN);d.set_child(picture);d.present()
 
-    def providers_dialog(self):
+    def providers_dialog(self,preselect=None):
         from .model_ui import ConnectionDialog
-        dialog=ConnectionDialog(self)
+        dialog=ConnectionDialog(self,preselect)
         dialog.window.controller=dialog
         return dialog.window
 

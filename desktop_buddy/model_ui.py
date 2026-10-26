@@ -4,7 +4,7 @@ import re
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, GLib
-from .state import PROVIDERS, ProviderConfig, thinking_levels, thinking_label
+from .state import PROVIDERS, ProviderConfig, thinking_levels, thinking_choices, thinking_label
 from .providers import Provider
 from .comfyui import ComfyUI
 from .ui_widgets import label, button, scroller
@@ -73,7 +73,7 @@ def set_thinking_choices(dropdown, provider_id, value='', model=''):
     try:index = dropdown.values.index(value)
     except ValueError:index = 0
     dropdown.set_selected(index)
-    dropdown.set_tooltip_text('The selected model must support this level. Provider default omits the setting.')
+    dropdown.set_tooltip_text('How much the model thinks before answering. Default lets the service decide.')
 
 
 def thinking_value(dropdown):
@@ -81,104 +81,117 @@ def thinking_value(dropdown):
     return dropdown.values[selected] if selected < len(dropdown.values) else ''
 
 
-class ModelPicker:
+class ModelMenu:
+    """One button in the toolbar. One click opens it; one more click changes the
+    model or the thinking level. Nothing to confirm."""
+
     def __init__(self, app):
         self.app = app
-        self.window, box = window(app, 'Change model', height=500)
-        box.append(label('Choose a model', 'brand'))
-        running = bool(app.worker and app.worker.is_alive())
-        box.append(label('Your conversation is kept. The current task keeps its model unless you stop it.'
-                         if running else 'Switch providers or models and continue this conversation.',
-                         'muted', wrap=True))
-        search = Gtk.SearchEntry(placeholder_text='Search your models and providers')
-        self.search = search
-        search.update_property([Gtk.AccessibleProperty.LABEL], ['Search models'])
-        box.append(search)
-        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
-        self.list.add_css_class('model-choice')
-        profiles = app.store.get('model_profiles', {})
-        for config in app.store.configs().values():
+        self.filling = False
+        self.button = Gtk.MenuButton()
+        self.button.add_css_class('model-menu')
+        self.button.set_tooltip_text('Choose which AI model Buddy uses and how much it thinks')
+        self.button.update_property([Gtk.AccessibleProperty.LABEL], ['Model and thinking level'])
+        face = Gtk.Box(spacing=8)
+        self.title = label('', ellipsize=3)
+        self.title.set_max_width_chars(34)
+        face.append(self.title)
+        face.append(Gtk.Image.new_from_icon_name('pan-down-symbolic'))
+        self.button.set_child(face)
+        self.popover = Gtk.Popover()
+        self.popover.connect('show', lambda *_: self.refresh())
+        self.button.set_popover(self.popover)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.box.set_size_request(340, -1)
+        self.popover.set_child(self.box)
+        self.refresh()
+
+    def current(self):
+        return self.app.store.configs()[self.app.selected_id()]
+
+    def profiles(self):
+        profiles = dict(self.app.store.get('model_profiles', {}))
+        for config in self.app.store.configs().values():
             if config.model:profiles[config.id + ':' + config.model] = config.__dict__
-        self.rows = []
-        current = app.store.configs()[app.selected_id()]
-        for values in sorted(profiles.values(), key=lambda v: (v['id'], v['model'])):
-            config = ProviderConfig(**values)
-            row = Gtk.ListBoxRow()
-            row.config = config
-            row.search_text = (config.model + ' ' + PROVIDERS[config.id][0]).casefold()
-            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            for side in ('top', 'bottom', 'start', 'end'):getattr(content, 'set_margin_' + side)(10)
-            content.append(label(config.model, ellipsize=3))
-            suffix = 'Local' if config.local else 'Cloud'
-            if (config.id, config.model) == (current.id, current.model):suffix += ' · Selected'
-            content.append(label(PROVIDERS[config.id][0] + ' · ' + suffix, 'muted'))
-            content.append(label('Thinking: ' + thinking_label(config.id, config.reasoning), 'status'))
-            row.set_child(content)
-            self.list.append(row)
-            self.rows.append(row)
-            if (config.id, config.model) == (current.id, current.model):self.list.select_row(row)
-        self.empty = label('No saved models yet. Connect a provider below to choose one.', 'muted', wrap=True)
-        box.append(self.empty)
-        box.append(scroller(self.list, minimum=140))
-        self.use = button('Use for next message' if running else 'Use model', lambda *_: self.choose(), 'suggested-action')
-        self.stop_switch = button('Stop task & switch', lambda *_: self.choose(True))
-        self.stop_switch.set_visible(running)
-        self.note = label('', 'status', wrap=True)
-        box.append(self.note)
-        actions = Gtk.Box(spacing=8)
-        actions.append(button('Connect / add model', self.setup))
-        box.append(actions)
-        footer = Gtk.Box(spacing=8, halign=Gtk.Align.END)
-        footer.append(button('Cancel', lambda *_: self.window.destroy()))
-        footer.append(self.stop_switch)
-        footer.append(self.use)
-        box.append(footer)
-        def selection(*_):
-            row = self.list.get_selected_row()
-            available = bool(row and row.get_visible())
-            self.use.set_sensitive(available)
-            self.stop_switch.set_sensitive(available)
-            blocked = available and app.local.get_active() and not row.config.local
-            self.note.set_text('Offline mode is on. Turn it off in Task options to use this online model.' if blocked else '')
-        def filter_rows(*_):
-            query = search.get_text().casefold().strip()
-            for row in self.rows:row.set_visible(query in row.search_text)
-            self.empty.set_visible(not any(r.get_visible() for r in self.rows))
-            if self.rows:self.empty.set_text('No matching saved models. Connect / add model to find more.')
-            selection()
-        search.connect('notify::text', filter_rows)
-        self.list.connect('row-selected', selection)
-        self.list.connect('row-activated', lambda *_: self.choose())
-        filter_rows()
-        self.window.present()
+        return [ProviderConfig(**values) for values in sorted(profiles.values(), key=lambda v: (v['id'], v['model']))]
 
-    def setup(self, *_):
-        self.window.destroy()
-        self.app.providers_dialog()
+    def refresh(self, *_):
+        """Rebuild from saved settings so the menu always shows what is really selected."""
+        current = self.current()
+        if current.model:
+            self.title.set_text(f'{current.model} · {thinking_label(current.id, current.reasoning)} thinking')
+        else:self.title.set_text('Choose a model')
+        self.filling = True
+        try:
+            while self.box.get_first_child():self.box.remove(self.box.get_first_child())
+            running = bool(self.app.worker and self.app.worker.is_alive())
+            self.app.model_hint = label('', 'status', wrap=True)
+            self.app.update_model_hint()
+            self.box.append(label('MODEL', 'eyebrow'))
+            profiles = self.profiles()
+            if not profiles:
+                self.box.append(label('No models yet. Add one below.', 'muted', wrap=True))
+            group = None
+            for config in profiles:
+                selected = (config.id, config.model) == (current.id, current.model)
+                where = 'on this computer' if config.local else 'online'
+                row = self.choice(config.model, PROVIDERS[config.id][0] + ' · ' + where, selected, group,
+                                  lambda c=config: self.pick_model(c))
+                group = group or row
+                self.box.append(row)
+            if current.model:
+                self.box.append(label('THINKING', 'eyebrow'))
+                group = None
+                for title, wire, hint in thinking_choices(current.id, current.model):
+                    row = self.choice(title, hint, wire == current.reasoning, group, lambda w=wire: self.pick_thinking(w))
+                    group = group or row
+                    self.box.append(row)
+            self.note = label('', 'status', wrap=True)
+            offline = getattr(self.app, 'local', None)
+            blocked = current.model and offline is not None and offline.get_active() and not current.local
+            if blocked:self.note.set_text('Offline mode is on. Turn it off in Task options (the gear beside Send) to use this online model.')
+            elif running:self.note.set_text('A task is running. Your choice applies to the next message.')
+            self.note.set_visible(bool(self.note.get_text()))
+            self.box.append(self.note)
+            self.box.append(self.app.model_hint)
+            self.app.model_hint.set_visible(running)
+            self.box.append(Gtk.Separator())
+            self.box.append(button('Add or set up a model…', lambda *_: (self.popover.popdown(), self.app.providers_dialog())))
+            if current.model:
+                self.box.append(button('Advanced settings for this model…', lambda *_: (self.popover.popdown(), self.app.providers_dialog(current))))
+        finally:self.filling = False
 
-    def choose(self, stop=False):
-        row = self.list.get_selected_row()
-        if not row or not row.get_visible():return
-        config = row.config
-        if stop and self.app.worker and self.app.worker.is_alive():
-            self.app.cancel()
-            self.note.set_text('Stopping the current task before switching…')
-            self.use.set_sensitive(False)
-            self.stop_switch.set_sensitive(False)
-            def stopped():
-                if self.app.worker and self.app.worker.is_alive():return True
-                if self.window.get_visible():
-                    self.app.select_model(config)
-                    self.window.destroy()
-                return False
-            GLib.timeout_add(50, stopped)
-        else:
-            self.app.select_model(config)
-            self.window.destroy()
+    def choice(self, title, hint, active, group, callback):
+        row = Gtk.CheckButton()
+        row.add_css_class('menu-choice')
+        if group:row.set_group(group)
+        words = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        words.append(label(title, ellipsize=3))
+        if hint:words.append(label(hint, 'muted', wrap=True))
+        row.set_child(words)
+        row.set_active(active)
+        row.update_property([Gtk.AccessibleProperty.LABEL], [title + ('. ' + hint if hint else '')])
+        def toggled(widget):
+            if self.filling or not widget.get_active():return
+            callback()
+        row.connect('toggled', toggled)
+        return row
+
+    def pick_model(self, config):
+        self.app.select_model(config)
+
+    def pick_thinking(self, wire):
+        config = self.current()
+        if not config.model:return
+        try:self.app.store.save_config(config.set_thinking(wire))
+        except ValueError as exc:
+            self.app.notice(f'That thinking level cannot be used with this model: {exc}')
+        self.refresh()
 
 
 class ConnectionDialog:
-    def __init__(self, app):
+    def __init__(self, app, preselect=None):
+        """preselect: a saved ProviderConfig to open directly for editing."""
         self.app = app
         self.generation = 0
         self.token = None
@@ -258,7 +271,7 @@ class ConnectionDialog:
         thinking_row = Gtk.Box(spacing=10)
         thinking_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
         thinking_text.append(label('Thinking level'))
-        thinking_text.append(label('Lower is faster; higher can improve difficult work. Support depends on the model.', 'muted', wrap=True))
+        thinking_text.append(label('Lower is faster; higher helps with hard problems. You can also change this from the model button in the main window.', 'muted', wrap=True))
         thinking_row.append(thinking_text)
         self.thinking = Gtk.DropDown()
         self.thinking.update_property([Gtk.AccessibleProperty.LABEL], ['Thinking level'])
@@ -266,10 +279,10 @@ class ConnectionDialog:
         models.append(thinking_row)
         self.check_button = button('Test connection (optional)', lambda *_: self.verify())
 
-        advanced = Gtk.Expander(label='Advanced settings')
+        self.advanced = Gtk.Expander(label='Advanced settings')
         details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        advanced.set_child(details)
-        body.append(advanced)
+        self.advanced.set_child(details)
+        body.append(self.advanced)
         self.fields = {}
         for name, title in [('base_url','API base URL'), ('context_tokens','Context limit'),
                             ('max_output','Maximum response tokens'),
@@ -310,6 +323,13 @@ class ConnectionDialog:
         self.provider.connect('notify::selected', self.fill)
         self.privacy.connect('toggled', lambda *_: self.refresh_privacy())
         self.fill()
+        if preselect is not None:
+            self.provider.set_selected(app.provider_ids.index(preselect.id))
+            self.fill()
+            self.model.set_text(preselect.model)  # loads that model's saved profile into the fields
+            self.connection_expander.set_expanded(False)
+            self.advanced.set_expanded(True)
+            self.status.set_text(f'3  Editing {preselect.model}. Change the settings below, then choose Use model or Save connection.')
         self.window.present()
 
     def close(self, *_):

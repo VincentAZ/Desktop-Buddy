@@ -1,10 +1,12 @@
 """Native conversation layout. No web runtime or background service."""
 from __future__ import annotations
 
+from pathlib import Path
 import json
 import re
 from html import escape
 import gi
+from . import __version__
 
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Pango
@@ -66,6 +68,11 @@ textview { padding: 4px; }
 .model-choice row:selected { background: #dce8d7; color: #263b35; }
 .model-choice row:hover { background: #eef2e9; }
 popover contents { background: #f8f7f3; padding: 12px; border: 1px solid #d8ded3; }
+menubutton.model-menu > button { background: #ffffff; border: 1px solid #d8ded3; padding: 8px 12px; }
+menubutton.model-menu > button:hover { background: #eef2e9; }
+checkbutton.menu-choice { padding: 6px 4px; border-radius: 8px; }
+checkbutton.menu-choice:hover { background: #eef2e9; }
+checkbutton.menu-choice:checked { background: #e1e9d9; }
 '''
 
 
@@ -128,7 +135,10 @@ def scroller(child, expand=True, minimum=0):
 def build_workspace(app, providers, text_view, default_workspace):
     """Task-first native shell. Technical controls live in one options popover."""
     header = Gtk.HeaderBar()
-    header.set_title_widget(label('Desktop Buddy', 'conversation-title'))
+    title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER)
+    title.append(label('Desktop Buddy', 'conversation-title'))
+    title.append(label('v' + __version__, 'status'))
+    header.set_title_widget(title)
     history_toggle = button('History', lambda *_: app.sidebar.set_visible(not app.sidebar.get_visible()), icon='sidebar-show-symbolic')
     header.pack_start(history_toggle)
     app.stop_button = button('Stop everything', lambda *_: app.emergency(), 'flat')
@@ -172,15 +182,9 @@ def build_workspace(app, providers, text_view, default_workspace):
     chosen = app.store.get('provider', 'lmstudio')
     app.selector.set_selected(app.provider_ids.index(chosen) if chosen in app.provider_ids else 5)
     app.selector.connect('notify::selected', app.provider_changed)
-    model_button = button('Change model', lambda *_: app.model_dialog())
-    model_content = Gtk.Box(spacing=8)
-    app.model_label = label('', ellipsize=Pango.EllipsizeMode.END)
-    app.model_label.set_max_width_chars(24)
-    model_content.append(app.model_label)
-    model_content.append(Gtk.Image.new_from_icon_name('pan-down-symbolic'))
-    model_button.set_child(model_content)
-    model_button.set_tooltip_text('Choose your assistant’s model')
-    toolbar.append(model_button)
+    from .model_ui import ModelMenu
+    app.model_menu = ModelMenu(app)
+    toolbar.append(app.model_menu.button)
     toolbar.append(menu_button('view-more-symbolic', 'Conversation options', [
         ('Rename conversation', app.rename_conversation_dialog),
         ('Continue unfinished task', app.resume),
@@ -259,20 +263,20 @@ def build_workspace(app, providers, text_view, default_workspace):
     settings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     settings.set_size_request(320, -1)
     settings.append(label('Task options', 'step-title'))
-    app.model_hint = label('', 'status', wrap=True)
-    settings.append(app.model_hint)
-    settings.append(label('Thinking level', 'muted'))
-    app.thinking_selector = Gtk.DropDown()
-    app.thinking_selector.update_property([Gtk.AccessibleProperty.LABEL], ['Thinking level'])
-    app.thinking_selector.connect('notify::selected', app.thinking_changed)
-    settings.append(app.thinking_selector)
     app.local = Gtk.CheckButton(label='Keep Buddy offline')
     app.local.set_active(app.store.get('local_only', True))
     app.local.set_tooltip_text('Use a local model and block Buddy’s network tools. Other apps may still connect.')
     app.local.connect('toggled', app.local_changed)
     settings.append(app.local)
     settings.append(label('Folder Buddy can work in', 'muted'))
-    app.workspace = Gtk.Entry(text=app.store.get('workspace', str(default_workspace)))
+    saved_workspace = app.store.get('workspace', str(default_workspace))
+    if not Path(saved_workspace).expanduser().is_dir():
+        # The saved folder was moved or deleted (for example a renamed checkout).
+        # Fall back to the default instead of blocking every Send on a dead path.
+        Path(default_workspace).mkdir(parents=True, exist_ok=True)
+        saved_workspace = str(default_workspace)
+        app.store.set('workspace', saved_workspace)
+    app.workspace = Gtk.Entry(text=saved_workspace)
     app.workspace.update_property([Gtk.AccessibleProperty.LABEL], ['Working folder'])
     app.workspace.connect('activate', lambda *_: (app.save_preferences(), pop.popdown()))
     settings.append(app.workspace)

@@ -8,7 +8,7 @@
     <img alt="Linux" src="https://img.shields.io/badge/Linux-GNOME-4b6b53?style=flat-square&logo=linux&logoColor=white">
     <img alt="Python" src="https://img.shields.io/badge/Python-3.11%2B-315c49?style=flat-square&logo=python&logoColor=white">
     <img alt="GTK" src="https://img.shields.io/badge/UI-GTK_4-4a745d?style=flat-square&logo=gnome&logoColor=white">
-    <img alt="Tests" src="https://img.shields.io/badge/tests-109_passing-315c49?style=flat-square">
+    <img alt="Tests" src="https://img.shields.io/badge/tests-118_passing-315c49?style=flat-square">
     <img alt="Status" src="https://img.shields.io/badge/status-pre--alpha-c47f32?style=flat-square">
   </p>
 </div>

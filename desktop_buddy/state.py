@@ -20,42 +20,84 @@ PROVIDERS = {
     'ollama': ('Ollama', 'http://127.0.0.1:11434', 'ollama', True),
 }
 
-# The wire value is stored with each model profile. "Provider default" omits
-# the parameter, which is safest until a model's supported levels are known.
+# Configuration defaults, not claims about a model. Local servers are usually
+# configured small; every current cloud model has at least 128k.
+LOCAL_CONTEXT = 32768
+CLOUD_CONTEXT = 128000
+
+
+def default_context(local):
+    return LOCAL_CONTEXT if local else CLOUD_CONTEXT
+
+# The wire value is stored with each model profile. Titles are the plain words
+# shown in the app; the hint says what the level means in everyday terms.
+# "Default" omits the parameter, which is safest until a model's supported
+# levels are known.
+DEFAULT_LEVEL = ('Default', '', 'The service picks a normal amount of thinking.')
+LEVEL_HINTS = {
+    'off': 'No extra thinking. Fastest.',
+    'minimal': 'Barely any thinking. Very fast.',
+    'low': 'A little thinking. Quick answers.',
+    'medium': 'A fair amount of thinking. Good for most tasks.',
+    'high': 'A lot of thinking. Better for harder problems, slower.',
+    'xhigh': 'Much more thinking. Very hard problems, much slower.',
+    'max': 'As much thinking as the model allows. Slowest.',
+    'auto': 'The model decides how much to think for each step.',
+    'on': 'The model thinks before answering.',
+}
 THINKING_LEVELS = {
     'openai': (
-        ('Provider default', ''), ('None', 'none'), ('Minimal', 'minimal'),
-        ('Low', 'low'), ('Medium', 'medium'), ('High', 'high'),
-        ('Extra high', 'xhigh'), ('Maximum', 'max'),
+        DEFAULT_LEVEL,
+        ('Off', 'none', LEVEL_HINTS['off']),
+        ('Minimal', 'minimal', LEVEL_HINTS['minimal']),
+        ('Low', 'low', LEVEL_HINTS['low']),
+        ('Medium', 'medium', LEVEL_HINTS['medium']),
+        ('High', 'high', LEVEL_HINTS['high']),
+        ('Extra high', 'xhigh', LEVEL_HINTS['xhigh']),
+        ('Maximum', 'max', LEVEL_HINTS['max']),
     ),
+    # Anthropic takes a token budget on the wire; users only see a level.
     'anthropic': (
-        ('Provider default', ''), ('Adaptive', 'adaptive'),
-        ('1,024 token budget', '1024'), ('4,096 token budget', '4096'),
-        ('8,192 token budget', '8192'), ('16,384 token budget', '16384'),
-        ('32,768 token budget', '32768'),
+        DEFAULT_LEVEL,
+        ('Automatic', 'adaptive', LEVEL_HINTS['auto']),
+        ('Low', '1024', LEVEL_HINTS['low']),
+        ('Medium', '4096', LEVEL_HINTS['medium']),
+        ('High', '8192', LEVEL_HINTS['high']),
+        ('Extra high', '16384', LEVEL_HINTS['xhigh']),
+        ('Maximum', '32768', LEVEL_HINTS['max']),
     ),
     'ollama': (
-        ('Provider default', ''), ('On', 'true'), ('Off', 'false'),
-        ('Low', 'low'), ('Medium', 'medium'), ('High', 'high'),
+        DEFAULT_LEVEL,
+        ('On', 'true', LEVEL_HINTS['on']),
+        ('Off', 'false', LEVEL_HINTS['off']),
+        ('Low', 'low', LEVEL_HINTS['low']),
+        ('Medium', 'medium', LEVEL_HINTS['medium']),
+        ('High', 'high', LEVEL_HINTS['high']),
     ),
 }
 
-COMPATIBLE_THINKING_LEVELS = (
-    ('Provider default', ''), ('None', 'none'), ('Minimal', 'minimal'),
-    ('Low', 'low'), ('Medium', 'medium'), ('High', 'high'),
-    ('Extra high', 'xhigh'), ('Maximum', 'max'),
-)
+COMPATIBLE_THINKING_LEVELS = THINKING_LEVELS['openai']
 
 
-def thinking_levels(provider_id, model=''):
+def thinking_choices(provider_id, model=''):
+    """(title, wire value, plain-language hint) for every level a model offers."""
     choices = THINKING_LEVELS.get(provider_id, COMPATIBLE_THINKING_LEVELS)
     if provider_id == 'openai' and model == 'gpt-6.1-sol':
-        return tuple((title, wire) for title, wire in choices if wire not in ('none','minimal'))
+        return tuple(choice for choice in choices if choice[1] not in ('none','minimal'))
     return choices
 
 
+def thinking_levels(provider_id, model=''):
+    """(title, wire value) pairs, for dropdowns that only need names."""
+    return tuple((title, wire) for title, wire, _hint in thinking_choices(provider_id, model))
+
+
 def thinking_label(provider_id, value):
-    return next((title for title, wire in thinking_levels(provider_id) if wire == value), value or 'Provider default')
+    return next((title for title, wire in thinking_levels(provider_id) if wire == value), value or 'Default')
+
+
+def thinking_hint(provider_id, value):
+    return next((hint for _title, wire, hint in thinking_choices(provider_id) if wire == value), '')
 
 @dataclass
 class ProviderConfig:
@@ -89,6 +131,17 @@ class ProviderConfig:
     @property
     def use_vision(self):
         return self.vision is not False
+
+    def set_thinking(self, wire):
+        """Pick a thinking level the way a person would: the level just works.
+        Anthropic budgets must fit inside the response limit, so the limit grows
+        with the level instead of rejecting the choice."""
+        self.reasoning = wire
+        if self.protocol == 'anthropic' and wire and wire != 'adaptive':
+            budget = int(wire)
+            if budget >= self.max_output:
+                self.max_output = min(budget + 4096, max(self.context_tokens - 1, budget + 1))
+        return self
 
     def validate(self):
         self.__post_init__()
@@ -150,6 +203,17 @@ class Store:
                             if config.get(capability) is False:config[capability] = None
                     self.set(key, values)
                 self.set('capability_schema', 2)
+        # Version 2 gave cloud models the local 32k default, which forced constant
+        # compaction. Raise only values still at that default; explicit choices stay.
+        if self.get('capability_schema', 1) < 3:
+            with self.lock, self.db:
+                for key in ('providers', 'model_profiles'):
+                    values = self.get(key, {})
+                    for config in values.values():
+                        if not config.get('local') and config.get('context_tokens') == LOCAL_CONTEXT:
+                            config['context_tokens'] = CLOUD_CONTEXT
+                    self.set(key, values)
+                self.set('capability_schema', 3)
 
     def set(self,key,value):
         with self.lock,self.db:
@@ -162,7 +226,7 @@ class Store:
 
     def configs(self):
         saved=self.get('providers',{})
-        return {k:ProviderConfig(**saved[k]) if k in saved else ProviderConfig(k,v[1],v[2],v[3]) for k,v in PROVIDERS.items()}
+        return {k:ProviderConfig(**saved[k]) if k in saved else ProviderConfig(k,v[1],v[2],v[3],context_tokens=default_context(v[3])) for k,v in PROVIDERS.items()}
 
     def save_config(self,config):
         config.validate()

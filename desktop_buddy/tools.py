@@ -140,10 +140,32 @@ class Files:
         return {'matches':matches,'truncated':False}
 
 
-def run_process(argv,cwd,token,timeout=60,local_only=False):
+MAX_COMMAND_SECONDS=3600  # Package installs and downloads legitimately run for minutes.
+# Desktop-session identity only. It lets pkexec/polkit show the GNOME authentication
+# dialog and lets xdg-open/GUI helpers reach the user's session. Secrets never travel
+# through the environment; everything else from the parent process is dropped.
+SESSION_ENV=('DISPLAY','WAYLAND_DISPLAY','XAUTHORITY','XDG_RUNTIME_DIR','DBUS_SESSION_BUS_ADDRESS','XDG_SESSION_TYPE',
+    'XDG_SESSION_ID','XDG_CURRENT_DESKTOP','XDG_DATA_DIRS','USER','LOGNAME','SHELL','TERM')
+
+
+def _last_line(output):
+    """Most recent non-empty line of a command's output file (progress bars use \\r)."""
+    try:
+        size=os.fstat(output.fileno()).st_size
+        if not size:return ''
+        os.lseek(output.fileno(),max(0,size-600),os.SEEK_SET)
+        tail=os.read(output.fileno(),600).decode(errors='replace')
+    except OSError:return ''
+    lines=[x.strip() for x in tail.replace('\r','\n').split('\n') if x.strip()]
+    return lines[-1][:160] if lines else ''
+
+
+def run_process(argv,cwd,token,timeout=120,local_only=False,progress=None):
+    """progress(text) is called about once per second while the command runs."""
     if not argv or not all(isinstance(x,str) and '\x00' not in x for x in argv):raise ValueError('argv must be a non-empty list of strings.')
-    timeout=max(1,min(timeout,180))
+    timeout=max(1,min(timeout,MAX_COMMAND_SECONDS))
     env={'PATH':os.environ.get('PATH',os.defpath),'LANG':'C.UTF-8','HOME':str(Path.home())}
+    if not local_only:env.update({k:os.environ[k] for k in SESSION_ENV if k in os.environ})
     if local_only:
         if not shutil.which('bwrap'):raise Denied('Local-only shell requires bubblewrap. No unsandboxed fallback is allowed.')
         # Hide session sockets, user files and host process table. Only workspace writable.
@@ -153,17 +175,21 @@ def run_process(argv,cwd,token,timeout=60,local_only=False):
             '--clearenv','--setenv','PATH',os.defpath,'--setenv','LANG','C.UTF-8','--setenv','HOME',str(cwd),'--',*argv]
     else:command=argv
     token.check()
-    start=time.monotonic()
+    start=time.monotonic();reported=start;shown=' '.join(argv)[:70]
     with tempfile.TemporaryFile() as output:
         proc=subprocess.Popen(command,cwd=cwd,env=env,stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
         try:
             token.track(proc)
             while proc.poll() is None:
                 token.wait(.03)
-                if time.monotonic()-start>timeout:
+                now=time.monotonic()
+                if now-start>timeout:
                     token._kill(proc);proc.wait();raise TimeoutError(f'Command exceeded {timeout}s and its process group was killed.')
                 if os.fstat(output.fileno()).st_size>2*1024*1024:
                     token._kill(proc);proc.wait();raise ValueError('Command output exceeded 2 MiB; process group killed.')
+                if progress and now-reported>=1:
+                    reported=now;elapsed=int(now-start);line=_last_line(output)
+                    progress(f'Running: {shown} · {elapsed//60}m {elapsed%60:02d}s of up to {timeout//60}m'+(' · '+line if line else ''))
             token.check();output.seek(0);data=output.read(60001)
             return {'exit_code':proc.returncode,'output':data[:60000].decode(errors='replace'),'truncated':len(data)>60000,'elapsed_seconds':round(time.monotonic()-start,3),'verified':proc.returncode==0}
         finally:
@@ -174,6 +200,7 @@ class Registry:
     def __init__(self,policy,store,desktop=None,accessibility=None,clipboard=None,browser=None):
         self.policy=policy;self.store=store;self.desktop=desktop;self.accessibility=accessibility
         self.clipboard=clipboard;self.browser=browser;self.tools={};self.files=Files(policy)
+        self.progress=lambda text:None  # The agent points this at the UI status line.
         self.comfyui=ComfyUI(store.get('comfyui_url','http://127.0.0.1:8188'))
         self._register()
 
@@ -190,7 +217,7 @@ class Registry:
         a('fs.mkdir','Create one directory; parent must exist.',{'path':S},['path'],lambda x,t:self.files.mkdir(**x),True)
         a('fs.move','Move/rename a regular file on the same filesystem, refusing overwrite.',{'path':S,'destination':S},['path','destination'],lambda x,t:self.files.move(**x),True)
         a('fs.delete','Delete one regular file with explicit confirmation; irreversible.',{'path':S},['path'],lambda x,t:self.files.delete(**x),True,'destructive')
-        a('shell.run','Run an argv array in the workspace with approval, bounded output/time, and process-group cancellation. For a script use ["bash","-c",script]. No detached processes.',{'argv':{'type':'array','items':S},'timeout':I},['argv'],lambda x,t:run_process(x['argv'],self.policy.workspace,t,x.get('timeout',60),self.policy.local_only),True,'command')
+        a('shell.run','Run an argv array in the workspace with approval, bounded output/time, and process-group cancellation. For a script use ["bash","-c",script]. timeout is in seconds (default 120, maximum 3600): give installs and downloads 1800 or more. Administrator commands go through ["pkexec",...]; the user authenticates in a GNOME dialog. No detached processes.',{'argv':{'type':'array','items':S},'timeout':I},['argv'],lambda x,t:run_process(x['argv'],self.policy.workspace,t,x.get('timeout',120),self.policy.local_only,self.progress),True,'command')
         a('system.inspect','Inspect platform, processes, GPU and installed applications without executing arbitrary commands.',{},[],self.system)
         a('task.checkpoint','Record a concise plan, completed steps and next action for recovery.',{'plan':S,'completed':S,'next':S},['plan','completed','next'],lambda x,t:x)
         a('skills.list','List readable workflow skills; load only those relevant to the task.',{},[],self.skill_list)
@@ -294,7 +321,7 @@ class Registry:
 
     def a11y(self,x,t):
         if not self.accessibility:raise RuntimeError('AT-SPI is unavailable.')
-        return self.accessibility.inspect(x.get('app',''),max(0,min(x.get('depth',3),24)),max(1,min(x.get('limit',300),800)),x.get('window',''))
+        return self.accessibility.inspect(x.get('app',''),max(0,min(x.get('depth',3),24)),max(1,min(x.get('limit',150),800)),x.get('window',''))
 
     def input(self,x,t):
         if not self.desktop:raise RuntimeError('Desktop backend unavailable.')

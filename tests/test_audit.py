@@ -27,6 +27,18 @@ class CapabilityTests(Sandbox):
         self.assertEqual((self.workspace/'proof').read_text(),'works')
         self.assertEqual(self.store.tasks(cid)[0]['status'],'complete')
 
+    def test_cloud_context_default_is_raised_once_but_explicit_values_stay(self):
+        config=ProviderConfig('openai','https://api.openai.com/v1','responses',False,model='gpt-6.1-sol',context_tokens=32768)
+        self.store.save_config(config)
+        chosen=ProviderConfig('xai','https://api.x.ai/v1','responses',False,model='grok',context_tokens=65536);self.store.save_config(chosen)
+        local=self.store.configs()['lmstudio'];local.model='small';self.store.save_config(local)
+        self.store.set('capability_schema',2)
+        self.store.close();self.store=Store(self.root/'state',self.redactor)
+        self.assertEqual(self.store.configs()['openai'].context_tokens,128000)
+        self.assertEqual(self.store.get('model_profiles')['openai:gpt-6.1-sol']['context_tokens'],128000)
+        self.assertEqual(self.store.configs()['xai'].context_tokens,65536)
+        self.assertEqual(self.store.configs()['lmstudio'].context_tokens,32768)
+        self.assertEqual(self.store.configs()['anthropic'].context_tokens,128000)
     def test_legacy_false_is_migrated_once_without_changing_model_or_reasoning(self):
         config=ProviderConfig('openai','https://api.openai.com/v1','responses',False,
                               model='gpt-6.1-sol',tools=False,reasoning='high')

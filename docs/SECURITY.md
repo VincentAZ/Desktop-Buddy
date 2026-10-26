@@ -26,7 +26,7 @@ The model cannot approve an action, change modes, grant itself a tool, modify pr
 | Clipboard read / persistent-memory change | Explicit sensitive-action approval |
 | Credential paths / Buddy state through model filesystem tools | Denied |
 
-Shell approval is powerful: a command executes as your user and can access that user's resources. Inspect complete scripts, not just their executable name. Privileged operations need approval of the precise command and the OS's own authorization; the app does not collect sudo passwords or configure root access. Docker operations deserve the same care because daemon access can be root-equivalent. No shell-command “safe regex” grants broad execution automatically.
+Shell approval is powerful: a command executes as your user and can access that user's resources. Inspect complete scripts, not just their executable name. Privileged operations need approval of the precise command and the OS's own authorization; the app does not collect sudo passwords or configure root access. Commands run with a minimal environment: PATH, HOME, LANG and the desktop-session identity variables (display, session bus, XDG session) so that `pkexec` can show GNOME's authentication dialog. API keys and the rest of Buddy's environment are never passed. Commands may run up to one hour before the process group is killed; cancellation still kills them immediately. Docker operations deserve the same care because daemon access can be root-equivalent. No shell-command “safe regex” grants broad execution automatically.
 
 Mode and privacy selections belong to the human UI. Changing them cancels an active task. Each task snapshots the selected model and policy. Only one process can use a given state profile at a time.
 

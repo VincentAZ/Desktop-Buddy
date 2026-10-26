@@ -8,7 +8,7 @@ import threading
 import time
 import unittest
 from unittest.mock import Mock,patch
-from desktop_buddy.agent import Agent,compact,repair_history
+from desktop_buddy.agent import Agent,compact,estimate_tokens,repair_history
 from desktop_buddy.providers import Provider,ProviderError,sse
 from desktop_buddy.security import Policy,Redactor,StopToken,Cancelled,Denied,local_url
 from desktop_buddy.state import Store,ProviderConfig,PROVIDERS
@@ -108,6 +108,16 @@ class SecurityTests(Sandbox):
         with patch.dict(os.environ,{'MY_SECRET_API_KEY':'do-not-inherit'}):
             result=run_process(['/usr/bin/env'],self.workspace,self.token)
         self.assertNotIn('MY_SECRET_API_KEY',result['output'])
+    def test_desktop_session_identity_passes_through(self):
+        # pkexec/polkit and GUI helpers need the session bus and display; secrets still never do.
+        with patch.dict(os.environ,{'DBUS_SESSION_BUS_ADDRESS':'unix:path=/run/user/1/bus','WAYLAND_DISPLAY':'wayland-9','MY_SECRET_API_KEY':'no'}):
+            result=run_process(['/usr/bin/env'],self.workspace,self.token)
+        self.assertIn('DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1/bus',result['output'])
+        self.assertIn('WAYLAND_DISPLAY=wayland-9',result['output']);self.assertNotIn('MY_SECRET_API_KEY',result['output'])
+    def test_long_timeouts_are_allowed_for_installs(self):
+        result=run_process(['true'],self.workspace,self.token,timeout=20000)
+        self.assertEqual(result['exit_code'],0)
+        with self.assertRaises(TimeoutError):run_process(['sleep','5'],self.workspace,self.token,timeout=1)
     def test_local_shell_fail_closed(self):
         with patch('desktop_buddy.tools.shutil.which',return_value=None):
             with self.assertRaises(Denied):run_process(['true'],self.workspace,self.token,local_only=True)
@@ -135,7 +145,39 @@ class PersistenceTests(Sandbox):
         for msg in result:
             seen.update(c['id'] for c in msg.get('tool_calls',[]))
             if msg['role']=='tool':self.assertIn(msg['tool_call_id'],seen)
-        self.assertEqual(result[0]['content'],'trusted');self.assertLess(len(json.dumps(result).encode()),6000)
+        self.assertEqual(result[0]['content'],'trusted');self.assertLessEqual(estimate_tokens(result),6000)
+    def test_compaction_budget_is_tokens_not_bytes(self):
+        # ~60 KB of history must fit a 24k-token budget untouched; raw bytes would have forced compaction.
+        m=[{'role':'system','content':'s'}]+[{'role':'user','content':'word '*2000},{'role':'assistant','content':'ok'}]*6
+        self.assertGreater(len(json.dumps(m).encode()),24672)
+        result,changed=compact(m,24672);self.assertFalse(changed);self.assertEqual(len(result),len(m))
+    def test_compaction_shortens_stale_results_before_forgetting_history(self):
+        # Bulky old accessibility dumps are the problem; the model's own messages and calls must survive.
+        m=[{'role':'system','content':'s'},{'role':'user','content':'install whatsie'}]
+        for i in range(10):
+            m.extend([{'role':'assistant','content':f'step {i}: checking','tool_calls':[{'id':str(i),'name':'run_tool','arguments':{'name':'desktop.accessibility'}}]},
+                      {'role':'tool','tool_call_id':str(i),'content':'node '*4000}])
+        self.assertGreater(estimate_tokens(m),60000)
+        result,changed=compact(m,26000);self.assertTrue(changed)
+        self.assertLessEqual(estimate_tokens(result),26000)
+        self.assertEqual([x['content'] for x in result if x['role']=='assistant'],[f'step {i}: checking' for i in range(10)])
+        self.assertEqual(result[1]['content'],'install whatsie')
+        self.assertIn('shortened',result[3]['content']);self.assertNotIn('shortened',result[-1]['content'])
+    def test_digest_keeps_progress_notes_and_actions(self):
+        m=[{'role':'system','content':'s'}]
+        for i in range(30):
+            m.extend([{'role':'user','content':'goal '+str(i)},{'role':'assistant','content':f'done part {i}','tool_calls':[{'id':str(i),'name':'run_tool','arguments':{'name':'shell.run','arguments':{'argv':['snap','install','x'+str(i)]}}}]},
+                      {'role':'tool','tool_call_id':str(i),'content':'result '*300}])
+        m.append({'role':'assistant','content':'next'})
+        result,changed=compact(m,5000);self.assertTrue(changed)
+        self.assertIn('done part',result[1]['content']);self.assertIn('snap',result[1]['content'])
+    def test_compaction_truncates_oversized_tail_instead_of_failing(self):
+        m=[{'role':'system','content':'s'},{'role':'user','content':'look at apps'},
+           {'role':'assistant','content':'','tool_calls':[{'id':'a','name':'run_tool','arguments':{}}]},
+           {'role':'tool','tool_call_id':'a','content':'node '*20000}]
+        result,changed=compact(m,4000);self.assertTrue(changed)
+        self.assertLessEqual(estimate_tokens(result),4000);self.assertIn('truncated',result[-1]['content'])
+        self.assertEqual([x['role'] for x in result][-2:],['assistant','tool'])
 
 class ScriptedProvider:
     def __init__(self,script):
@@ -170,6 +212,25 @@ class AgentTests(Sandbox):
         cid=self.store.conversation();agent=Agent(self.store,self.registry(),ScriptedProvider(script));agent.run(cid,'Make and verify a test file')
         self.assertEqual((self.workspace/'x.txt').read_text(),'two');self.assertEqual(self.store.tasks(cid)[0]['status'],'complete')
         self.assertEqual(len([a for a in self.store.audits(agent.task_id) if a['event']=='tool_finished']),4)
+    def test_message_sent_during_task_is_delivered_before_next_step_and_saved(self):
+        seen=[]
+        class Talkative(ScriptedProvider):
+            def complete(self,messages,*args):
+                seen.append([m['content'] for m in messages if m['role']=='user'])
+                if len(seen)==1:agent.say('I am back now')  # arrives while the first step's tool runs
+                return super().complete(messages,*args)
+        script=[tool_answer('fs.write',{'path':'x.txt','content':'one'},'1'),final()]
+        cid=self.store.conversation();agent=Agent(self.store,self.registry(),Talkative(script));agent.run(cid,'Make a file')
+        self.assertNotIn('I am back now',seen[0]);self.assertIn('I am back now',seen[1])
+        roles=[(m['role'],m.get('content','')[:14]) for m in self.store.messages(cid)]
+        self.assertEqual(roles[-3:-1],[('tool',roles[-3][1]),('user','I am back now')])  # after the tool result, before the final answer
+        self.assertEqual(self.store.tasks(cid)[0]['status'],'complete')
+        agent.say('too late');agent.run(cid,'again')
+        self.assertIn('too late',[m['content'] for m in self.store.messages(cid)])
+    def test_long_command_reports_progress(self):
+        updates=[]
+        run_process(['sh','-c','echo first; sleep 1.4; echo second'],self.workspace,self.token,progress=updates.append)
+        self.assertTrue(updates);self.assertIn('Running: sh -c',updates[0]);self.assertIn('first',updates[0]);self.assertIn('0m 01s',updates[0])
     def test_recover_from_missing_file(self):
         script=[tool_answer('fs.read',{'path':'missing'},'1'),tool_answer('fs.write',{'path':'missing','content':'recovered'},'2'),tool_answer('fs.read',{'path':'missing'},'3'),final()]
         cid=self.store.conversation();Agent(self.store,self.registry(),ScriptedProvider(script)).run(cid,'Recover safely')
