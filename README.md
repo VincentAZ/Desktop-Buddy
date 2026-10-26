@@ -1,68 +1,136 @@
-# Desktop Buddy
+<div align="center">
+  <img src="assets/desktop-buddy.svg" width="112" alt="Desktop Buddy logo">
+  <h1>Desktop Buddy</h1>
+  <p><strong>Tell your Linux desktop what you want done.</strong></p>
+  <p>A native, local-first AI assistant for GNOME that can work with files, apps, browsers, terminals, images, and your screen.</p>
 
-A standalone Linux desktop assistant: one model, one sequential harness, native GTK interface, local state, explicit control. Runs independently of Cursor or Codex. Built for this workstation's GNOME Wayland session.
+  <p>
+    <img alt="Linux" src="https://img.shields.io/badge/Linux-GNOME-4b6b53?style=flat-square&logo=linux&logoColor=white">
+    <img alt="Python" src="https://img.shields.io/badge/Python-3.11%2B-315c49?style=flat-square&logo=python&logoColor=white">
+    <img alt="GTK" src="https://img.shields.io/badge/UI-GTK_4-4a745d?style=flat-square&logo=gnome&logoColor=white">
+    <img alt="Tests" src="https://img.shields.io/badge/tests-109_passing-315c49?style=flat-square">
+    <img alt="Status" src="https://img.shields.io/badge/status-pre--alpha-c47f32?style=flat-square">
+  </p>
+</div>
 
-**Status: pre-alpha.** The task-focused native interface has been rebuilt for everyday use. The October 26 audit fixes the false tool-capability gate, message/draft loss, provider and cancellation issues, and file/browser/ComfyUI defects. The deterministic suite passes 109 tests, with additional native UI, browser and accessibility checks. Live paid-model acceptance remains unverified. See the [audit and evidence](docs/AUDIT_2026-10-26.md).
+![Desktop Buddy conversation interface](docs/screenshots/desktop-buddy-redesign.png)
 
-![Desktop Buddy](docs/screenshots/desktop-buddy-redesign.png)
+Desktop Buddy is built for people who want results, not an agent control panel. Choose a model, describe the outcome, and follow the work in a normal conversation. It runs as a standalone GTK app with local history, clear activity records, real cancellation, and three plain-language control modes.
 
-## Start
+> [!NOTE]
+> Desktop Buddy is pre-alpha and currently targets Ubuntu 26.04 with GNOME Wayland. The deterministic suite passes 109 tests; live paid-model acceptance is still unverified. See the [full audit](docs/AUDIT_2026-10-26.md).
 
-From this checkout:
+## Why it feels different
+
+- **A desktop app, not a developer console.** Native GTK, conversation-first navigation, searchable history, drafts, attachments, and accessible controls.
+- **Use the model you want.** OpenAI, Anthropic, xAI, Moonshot, OpenRouter, LM Studio, and Ollama have provider-specific adapters instead of one lowest-common-denominator shim.
+- **Three understandable modes.** **Just discuss** makes no changes. **Help me do it** asks before sensitive steps. **YOLO — do anything** gets out of the way and skips Buddy's approval prompts.
+- **Real Linux control.** Work with files and commands, launch apps, drive an isolated Chrome profile, inspect accessible UI controls, and use GNOME's screen and input portal.
+- **Local by default.** Conversations, tasks, preferences, memory, and audit records live in SQLite on your machine. API keys stay in GNOME Keyring.
+- **A stop button that means it.** Stop the current task or use **Stop everything** to cancel work, disconnect desktop control, and close Buddy's browser.
+
+## Start in 30 seconds
 
 ```bash
+git clone https://github.com/VincentAZ/Desktop-Buddy.git
+cd Desktop-Buddy
+./launch.sh --doctor
 ./launch.sh
 ```
 
-No installation is needed for a source launch on the inspected workstation. For an independent user installation, run `python3 scripts/install.py`; it builds an offline wheel, installs into a private environment using existing system libraries, and creates a GNOME launcher. This installer has been tested in an isolated project directory; your personal application menu has not been modified. No startup service or background agent is installed.
+Click **Set up Buddy**, choose an AI service and model, then type what you want. Cloud providers require your own API key; local providers require an existing LM Studio or Ollama service.
+
+Want an app-menu launcher and an isolated environment?
 
 ```bash
-./launch.sh --doctor
-./scripts/run-tests.sh
-./scripts/run-tests.sh --desktop  # opens only dedicated test browser/terminal windows
+python3 scripts/install.py
 ```
 
-Use `--data-dir /a/path/you/choose` for a separate local profile. One process may use a data directory at a time.
+The installer builds from this checkout without downloading packages, creates a private environment under `~/.local/share/desktop-buddy`, and adds a GNOME launcher. It does not install a background service or edit shell profiles. See [installation](docs/INSTALLATION.md) for system packages and troubleshooting.
 
-## First use
+## Pick your level of control
 
-1. Click **Set up Buddy**. Choose your AI service, paste its API key if needed, and click **Connect**. If you want a cloud service, turn off **Keep Buddy offline** in that dialog. Pick a model and click **Use model**. Your key is stored in GNOME Keyring.
-2. Tell Buddy what you need and click **Send**, or press **Ctrl+Enter**. **Help me do it** allows actions, with approval for sensitive steps. **Just discuss** prevents changes. **YOLO — do anything** runs commands, edits files, uses apps and makes online requests for your task without Buddy approval prompts. It is saved until you change it.
-3. Use **Task options** (the gear beside the attachment button) to choose a working folder, change thinking level, manage offline mode, connect computer control, or take a screenshot. The initial folder is `workspace/` in this checkout.
-4. Click the model name at the top to switch models without losing your conversation. During a task, the selection applies to your next message; **Stop task & switch** cancels before switching.
-5. Open **History** to find previous conversations, saved preferences and activity details. The conversation menu provides rename, delete and continue controls. Text drafts belong to their own conversations and survive a clean restart.
+| Mode | Best for | What Buddy can do |
+|---|---|---|
+| **Just discuss** | Questions, planning, review | Talk through the task without changing anything |
+| **Help me do it** | Everyday work | Take actions and pause before sensitive steps |
+| **YOLO — do anything** | Trusted tasks where speed matters | Run commands, edit files, use apps, and make online requests without Buddy approval prompts |
 
-Tools and image inputs are tried automatically unless you explicitly turn them off under **Advanced settings**. You do not need to pass a test or certify a model's capabilities before using it. The optional connection test performs no computer action. Unsupported requests display the service's explanation. Existing unchecked capability flags migrate automatically when the rebuilt app opens. GPT-6.1 Sol uses the Responses API for tools; its thinking menu excludes unsupported levels.
+YOLO mode does not bypass Linux permissions, provider restrictions, offline mode, GNOME consent dialogs, or application security. You can switch a waiting approval to YOLO without restarting the task.
 
-The paperclip adds up to eight images. Unsent images are temporary; switching conversations or closing Buddy removes them. Sent images remain in the saved conversation. Cloud tasks ask before sending conversation text, results and requested images to the selected service, unless you selected YOLO.
+## What it can do
 
-Approval dialogs offer **Skip action**, **Allow once**, and **Stop everything**. **Use YOLO for this and future tasks** approves the waiting action and continues the current task without cancelling it.
+```text
+“Sort these downloads into sensible folders and tell me what you changed.”
+“Open the latest invoice, extract the totals, and create a clean CSV.”
+“Use the browser to compare these three products and save a short report.”
+“Run the test suite, diagnose the failures, fix them, and show me the diff.”
+“Connect to my desktop and help me finish this form.”
+```
 
-**Stop** cancels the current task. **Stop everything**, also available through **Ctrl+Shift+Escape** while Buddy has focus, additionally disconnects computer control and closes Buddy's separate browser. It cannot undo completed actions. **Continue task** asks Buddy to inspect the saved progress before proceeding; it does not replay actions automatically.
+Under the hood, Buddy includes:
 
-Offline mode blocks Buddy's own cloud and network tools. Approved actions in other apps may still use those apps' connections. Keys, history, models and preferences persist locally. See [security and privacy](docs/SECURITY.md) for the exact boundaries.
+- Workspace file tools with atomic writes and verified results
+- Approved shell and script execution with offline network isolation
+- Image attachments, screenshots, and visual inspection
+- An isolated Chrome profile controlled through a private inherited pipe
+- GNOME Remote Desktop portal support for pointer, keyboard, scroll, drag, and screenshots
+- AT-SPI application, window, and accessible-control inspection
+- ComfyUI health checks, workflow runs, prompt batches, cancellation, and output collection
+- Streaming tool calls, bounded retries, repeated-error detection, checkpoints, and explicit resume
+- Persistent conversation history, per-conversation drafts, task records, audit events, and editable memory
 
-If Buddy was already open during the update, close and reopen it to load the rebuilt interface.
+## Designed around honest boundaries
 
-## Included
+Desktop Buddy reports what it actually knows. Input events are marked as sent until a later observation verifies the result. Portal consent is never bypassed. Offline mode blocks Buddy's network tools, while actions inside another app may still use that app's connection. Completed external actions cannot be undone by the stop button.
 
-- Sequential streaming agent loop, on-demand tool discovery, bounded retries/steps, repeated-error detection, durable checkpoints and explicit resume.
-- OpenAI/xAI Responses, Anthropic Messages, Moonshot/OpenRouter/LM Studio Chat Completions, and native Ollama adapters. Provider-specific reasoning state, image inputs, model discovery, usage and optional estimated cost.
-- Workspace filesystem tools, verified atomic writes, image inspection, approved shell/scripts, system inventory, approved HTTP requests, application launching, clipboard, accessibility and browser control.
-- Dedicated numeric-loopback ComfyUI status, single-workflow and 1–50 prompt batch tools with one exact approval, bounded polling, cancellation, verified history, and non-overwriting output copies.
-- GNOME portal screen/input implementation: movement, click/double/right click, drag, scroll, text and shortcuts. Input returns “sent, unverified” until another observation confirms the outcome.
-- AT-SPI application/window/control inspection and accessible actions. GNOME window operations through compositor keyboard shortcuts; universal arbitrary window geometry is not provided.
-- Visible Chrome automation via a private inherited CDP pipe and separate profile. No debugging port or personal-browser attachment.
-- Persistent SQLite history/audit/tasks, inspectable editable JSON memory and seven readable workflow skills.
-- No model downloads, extra inference runtime, Docker requirement, web server, telemetry, cloud deployment or agent swarm.
+Approval dialogs use direct choices: **Skip action**, **Allow once**, **Use YOLO**, and **Stop everything**. The separate activity view records tool decisions and results without turning the main conversation into a wall of diagnostics.
+
+Read [security and privacy](docs/SECURITY.md) for the exact trust boundaries.
+
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+    You[You] --> UI[Native GTK conversation]
+    UI --> Agent[Sequential agent loop]
+    Agent --> Models[Cloud or local model]
+    Agent --> Tools[Files · shell · browser · apps]
+    Tools --> Linux[GNOME portals + AT-SPI]
+    Agent --> State[(Local SQLite state)]
+    Keys[GNOME Keyring] --> Models
+```
+
+There is no Electron runtime, local web server, telemetry service, agent swarm, required Docker daemon, or bundled model download.
+
+## Test it
+
+```bash
+./scripts/run-tests.sh
+./scripts/run-tests.sh --desktop   # opens dedicated test browser/terminal windows
+./launch.sh --smoke-test --data-dir .test-data/smoke
+```
+
+The suite covers provider protocols, tools, cancellations, credentials, conversations, state, portals, ComfyUI, model selection, and YOLO behavior. Native UI fixtures exercise compact and wide layouts, failure recovery, drafts, model switching, approval behavior, and the desktop-control shortcut.
+
+## Project map
+
+| Path | Purpose |
+|---|---|
+| `desktop_buddy/` | Application, providers, tools, desktop control, and native UI |
+| `desktop_buddy/skills/` | Readable built-in workflow guidance |
+| `tests/` | Deterministic unit and protocol tests |
+| `scripts/` | Installer, diagnostics, UI checks, and physical workflow probes |
+| `docs/` | Architecture, audit, security, provider, and validation evidence |
 
 ## Documentation
 
-- [Architecture decision and discovery](docs/ARCHITECTURE.md)
-- [Provider setup and protocol sources](docs/PROVIDERS.md)
-- [Security and privacy boundaries](docs/SECURITY.md)
+- [Architecture and design decisions](docs/ARCHITECTURE.md)
 - [Installation and troubleshooting](docs/INSTALLATION.md)
-- [Acceptance evidence and known limitations](docs/TEST_RESULTS.md)
-- [Running implementation plan](docs/PLAN.md)
+- [Provider setup](docs/PROVIDERS.md)
+- [Security and privacy](docs/SECURITY.md)
+- [Audit findings and fixes](docs/AUDIT_2026-10-26.md)
+- [Test evidence and known limits](docs/TEST_RESULTS.md)
+- [Implementation plan](docs/PLAN.md)
 
-Source lives in `desktop_buddy/`; bundled readable skills in `desktop_buddy/skills/`; deterministic tests in `tests/`. Test fixtures simulate APIs and model decisions: they are not evidence that a real model completed the same workflow.
+Built for a Linux desktop where the assistant should explain itself clearly, act decisively, and stay out of the way.
