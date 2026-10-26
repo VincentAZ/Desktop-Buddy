@@ -56,7 +56,7 @@ class BuddyApp(Gtk.Application):
         self.agent=None;self.start_token=StopToken();self.worker=None;self.pending=[];self.desktop=None;self.a11y=None;self.aux_tokens=[]
         self.browser=Browser(self.data_dir/'browser-profile');self.cid=None;self.emergency_latched=False;self.window_handle='';self.task_usage={};self.pending_images=[]
         self.connect('activate',self.activate)
-        stop=Gio.SimpleAction.new('emergency',None);stop.connect('activate',lambda *_:self.emergency());self.add_action(stop)
+        stop=Gio.SimpleAction.new('emergency',None);stop.connect('activate',lambda *_:self.emergency('the Ctrl+Shift+Escape shortcut'));self.add_action(stop)
         new=Gio.SimpleAction.new('new-conversation',None);new.connect('activate',lambda *_:self.new_conversation());self.add_action(new)
         search=Gio.SimpleAction.new('search-conversations',None);search.connect('activate',lambda *_:self.focus_history());self.add_action(search)
         settings=Gio.SimpleAction.new('provider-settings',None);settings.connect('activate',lambda *_:self.providers_dialog());self.add_action(settings)
@@ -152,9 +152,12 @@ class BuddyApp(Gtk.Application):
         self.provider_changed()
 
     def mode_changed(self,*_):
-        if not getattr(self, 'granting_yolo', False) and self.worker and self.worker.is_alive():self.cancel()
+        # Never kill a running task from a dropdown. The new mode is used from the
+        # next message; the running task keeps the mode it started with.
         self.save_preferences()
         self.update_disclosure()
+        if not getattr(self, 'granting_yolo', False) and self.worker and self.worker.is_alive():
+            self.status.set_text('That applies to your next message. The running task keeps going; press Stop if you want it to end.')
 
     def selected_mode(self):
         return ('plan', 'execute', 'yolo')[self.mode.get_selected()]
@@ -171,7 +174,7 @@ class BuddyApp(Gtk.Application):
         self.status.set_text('YOLO is on · continuing without approval prompts')
 
     def local_changed(self,*_):
-        if self.worker and self.worker.is_alive():self.emergency()
+        if self.worker and self.worker.is_alive():self.emergency('turning Keep Buddy offline on or off')
         if self.local.get_active():self.browser.close()
         self.save_preferences()
         self.update_disclosure()
@@ -433,7 +436,8 @@ class BuddyApp(Gtk.Application):
             elif data['status']=='failed':self.alert('Something went wrong. See the message above.')
             else:
                 self.status.remove_css_class('attention')
-                self.status.set_text({'complete':'Finished · ready for your next message','cancelled':'Stopped · your progress is saved'}.get(data['status'],'Ready when you are'))
+                stopped='Stopped by '+getattr(self,'stop_source','you')+' · your progress is saved'
+                self.status.set_text({'complete':'Finished · ready for your next message','cancelled':stopped}.get(data['status'],'Ready when you are'))
                 if data['status']=='complete':self.notify('Finished','Buddy finished the task.')
         return False
 
@@ -599,15 +603,18 @@ class BuddyApp(Gtk.Application):
         if previous['status']=='complete':self.notice('The last task completed. Send a new request to continue.');return
         self.send('Resume the previous interrupted task using the conversation and this checkpoint. First inspect current state; never repeat an uncertain effect without asking. Checkpoint: '+previous['checkpoint'])
 
-    def cancel(self):
+    def cancel(self,source='the Stop button'):
+        self.stop_source=source
+        if self.worker and self.worker.is_alive():
+            self.store.audit(getattr(self.agent,'task_id',None) or 'ui','stopped',{'by':source})
         self.start_token.stop()
         if self.agent:self.agent.stop()
         for token in self.aux_tokens:token.stop()
         for done,dialog in list(self.pending):done.set();dialog.destroy()
         self.status.set_text('Cancellation requested · waiting for active I/O to return')
 
-    def emergency(self):
-        self.emergency_latched=True;self.cancel()
+    def emergency(self,source='the Stop everything button'):
+        self.emergency_latched=True;self.cancel(source)
         if self.desktop:threading.Thread(target=self.desktop.close,daemon=True).start()
         self.browser.close()
         self.status.set_text('EMERGENCY STOP · queued actions cancelled; desktop session revoked')
@@ -753,5 +760,5 @@ class BuddyApp(Gtk.Application):
         if not self.window.is_maximized():
             self.store.set('window_width',self.window.get_width())
             self.store.set('window_height',self.window.get_height())
-        self.save_draft();self.clear_attachments(True);self.emergency()
+        self.save_draft();self.clear_attachments(True);self.emergency('closing the app')
         self.quit();return False
