@@ -106,18 +106,19 @@ class ModelMenu:
         self.popover.set_child(self.box)
         self.refresh()
 
-    def current(self):
-        return self.app.store.configs()[self.app.selected_id()]
+    def current(self, configs=None):
+        return (configs or self.app.store.configs())[self.app.selected_id()]
 
-    def profiles(self):
+    def profiles(self, configs):
         profiles = dict(self.app.store.get('model_profiles', {}))
-        for config in self.app.store.configs().values():
+        for config in configs.values():
             if config.model:profiles[config.id + ':' + config.model] = config.__dict__
         return [ProviderConfig(**values) for values in sorted(profiles.values(), key=lambda v: (v['id'], v['model']))]
 
     def refresh(self, *_):
         """Rebuild from saved settings so the menu always shows what is really selected."""
-        current = self.current()
+        configs = self.app.store.configs()
+        current = self.current(configs)
         if current.model:
             self.title.set_text(f'{current.model} · {thinking_label(current.id, current.reasoning)} thinking')
         else:self.title.set_text('Choose a model')
@@ -128,7 +129,7 @@ class ModelMenu:
             self.app.model_hint = label('', 'status', wrap=True)
             self.app.update_model_hint()
             self.box.append(label('MODEL', 'eyebrow'))
-            profiles = self.profiles()
+            profiles = self.profiles(configs)
             if not profiles:
                 self.box.append(label('No models yet. Add one below.', 'muted', wrap=True))
             group = None

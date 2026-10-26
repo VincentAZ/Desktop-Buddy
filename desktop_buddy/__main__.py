@@ -72,15 +72,15 @@ def enter_own_scope(argv):
     if os.environ.get('DESKTOP_BUDDY_SCOPED') or in_own_scope():return
     runner=shutil.which('systemd-run')
     if not runner:return
+    unit=f'app-gnome-{APP_ID}-{os.getpid()}'
+    flags=['--user','--scope','--quiet','--collect','--slice','app.slice']
     try:
-        probe=subprocess.run([runner,'--user','--scope','--quiet','--collect','true'],stdin=subprocess.DEVNULL,
-                             capture_output=True,timeout=5)
+        probe=subprocess.run([runner,*flags,'--unit',unit+'-probe','true'],stdin=subprocess.DEVNULL,capture_output=True,timeout=5)
     except (OSError,subprocess.SubprocessError):return
     if probe.returncode!=0:return
     os.environ['DESKTOP_BUDDY_SCOPED']='1'
-    unit=f'app-gnome-{APP_ID}-{os.getpid()}'
-    os.execvp(runner,[runner,'--user','--scope','--quiet','--collect','--unit',unit,'--slice','app.slice',
-                      sys.executable,'-m','desktop_buddy',*argv])
+    try:os.execvp(runner,[runner,*flags,'--unit',unit,sys.executable,'-m','desktop_buddy',*argv])
+    except OSError:return  # start unscoped rather than not at all
 
 
 def main():

@@ -149,12 +149,12 @@ SESSION_ENV=('DISPLAY','WAYLAND_DISPLAY','XAUTHORITY','XDG_RUNTIME_DIR','DBUS_SE
 
 
 def _last_line(output):
-    """Most recent non-empty line of a command's output file (progress bars use \\r)."""
+    """Most recent non-empty line of a command's output file (progress bars use \\r).
+    Uses pread so the file offset shared with the still-writing child never moves."""
     try:
         size=os.fstat(output.fileno()).st_size
         if not size:return ''
-        os.lseek(output.fileno(),max(0,size-600),os.SEEK_SET)
-        tail=os.read(output.fileno(),600).decode(errors='replace')
+        tail=os.pread(output.fileno(),600,max(0,size-600)).decode(errors='replace')
     except OSError:return ''
     lines=[x.strip() for x in tail.replace('\r','\n').split('\n') if x.strip()]
     return lines[-1][:160] if lines else ''

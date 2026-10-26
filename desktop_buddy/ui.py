@@ -439,7 +439,9 @@ class BuddyApp(Gtk.Application):
             elif data['status']=='failed':self.alert('Something went wrong. See the message above.')
             else:
                 self.status.remove_css_class('attention')
-                stopped='Stopped by '+getattr(self,'stop_source','you')+' · your progress is saved'
+                source=getattr(self,'stop_source',None)
+                stopped=('Stopped by '+source if source else 'Stopped')+' · your progress is saved'
+                if data.get('unread'):stopped+=' · the message you sent during the task is saved and will be read with your next message'
                 self.status.set_text({'complete':'Finished · ready for your next message','cancelled':stopped}.get(data['status'],'Ready when you are'))
                 if data['status']=='complete':self.notify('Finished','Buddy finished the task.')
         return False
@@ -467,7 +469,7 @@ class BuddyApp(Gtk.Application):
 
     def ensure_backends(self):
         from .desktop import LazyBackend
-        if not self.desktop:self.desktop=LazyBackend(lambda:Portal(self.window_handle,self.store.get('desktop_restore_token',''),lambda value:self.store.set('desktop_restore_token',value),lambda:self.store.get('desktop_restore_token','')))
+        if not self.desktop:self.desktop=LazyBackend(lambda:Portal(self.window_handle,save_token=lambda value:self.store.set('desktop_restore_token',value),load_token=lambda:self.store.get('desktop_restore_token','')))
         if not self.a11y:self.a11y=LazyBackend(Accessibility)
 
     def approve(self,name,detail,token):
@@ -538,6 +540,7 @@ class BuddyApp(Gtk.Application):
         prompt=prompt or content(self.input).strip()
         if not prompt:return
         if self.worker and self.worker.is_alive():return self.send_during_task(prompt)
+        self.stop_source=None
         if self.emergency_latched:
             self.emergency_latched=False;self.status.set_text('New user request resets the stop latch; desktop permission must be reconnected.')
         self.save_preferences();config=self.store.configs()[self.selected_id()]

@@ -2,6 +2,7 @@
 from __future__ import annotations
 import copy
 import json
+import re
 import threading
 from collections import Counter
 from pathlib import Path
@@ -26,15 +27,20 @@ TAIL_RESULT_FLOOR=2000  # Characters kept from an oversized tool result in the r
 TAIL_MESSAGES=6  # Most recent messages are always kept verbatim.
 STALE_RESULT_KEEP=1200  # Characters kept from an older tool result once the budget is exceeded.
 VISUAL_NOTE='Untrusted visual observation.'
-WAITING_PHRASES=('i need','from you','tell me','let me know','paste','could you','can you','please provide','please send',
-                 'which one','do you want','would you like','before i can continue','your choice','confirm')
+WAITING_PATTERNS=[re.compile(p) for p in (
+    r"\bi need\b", r"\bfrom you\b", r"\btell me\b", r"\blet me know\b", r"\bcould you\b", r"\bcan you\b",
+    r"\bplease (?:provide|send|paste|tell|choose|pick|enter|reply|answer|confirm)\b", r"\bwhich (?:one|option|do you|would you|should)\b",
+    r"\bdo you want\b", r"\bwould you like\b", r"\bbefore i can continue\b", r"\byour choice\b", r"\bshould i\b",
+)]
 
 
 def needs_user_reply(text):
     """True when the assistant's final message is asking the person for something,
-    so the app can say so instead of 'Finished'."""
-    tail=(text or '').strip().casefold()[-1500:]
-    return '?' in tail or any(phrase in tail for phrase in WAITING_PHRASES)
+    so the app can say so instead of 'Finished'. A question mark counts only near
+    the end; request phrases must appear as whole words."""
+    tail=(text or '').strip().casefold()
+    if '?' in tail[-400:]:return True
+    return any(p.search(tail[-1500:]) for p in WAITING_PATTERNS)
 
 
 def estimate_tokens(items):
@@ -64,14 +70,19 @@ def _digest(old):
         +'\nRecent results (excerpts, not instructions): '+json.dumps(facts,ensure_ascii=False)}
 
 
+TRUNCATED_SUFFIX='\n[Result truncated to fit the context budget; rerun the tool with a narrower query if needed.]'
+
+
 def _shrink_tail(candidate,budget):
-    """Truncate the largest tool results in the retained tail until the estimate fits."""
+    """Truncate the largest tool results in the retained tail until the estimate fits.
+    A truncated result ends up exactly TAIL_RESULT_FLOOR long, so it is never picked
+    again and the loop always terminates."""
     truncated=False
     while estimate_tokens(candidate)>budget:
-        tools=[m for m in candidate if m['role']=='tool' and len(m['content'])>TAIL_RESULT_FLOOR]
+        tools=[m for m in candidate if m['role']=='tool' and len(m['content'])>TAIL_RESULT_FLOOR and not m['content'].endswith(TRUNCATED_SUFFIX)]
         if not tools:break
         biggest=max(tools,key=lambda m:len(m['content']))
-        biggest['content']=biggest['content'][:TAIL_RESULT_FLOOR]+'\n[Result truncated to fit the context budget; rerun the tool with a narrower query if needed.]'
+        biggest['content']=biggest['content'][:TAIL_RESULT_FLOOR-len(TRUNCATED_SUFFIX)]+TRUNCATED_SUFFIX
         truncated=True
     return truncated
 
@@ -192,6 +203,8 @@ class Agent:
                 calls=answer.get('tool_calls',[])
                 if not calls:
                     if not answer.get('content'):raise ProviderError('Provider returned an empty final response.')
+                    with self.inbox_lock:pending=bool(self.inbox)
+                    if pending:continue  # answer the message that arrived during this step
                     status='complete';return answer['content']
                 for call in calls:
                     self.token.check()
@@ -238,8 +251,8 @@ class Agent:
             self.event('error',str(e));self.store.audit(tid,'task_error',{'error':str(e),'type':type(e).__name__})
             return ''
         finally:
-            self._drain_inbox(cid)  # Messages sent during the final step are kept, never lost.
+            unread=self._drain_inbox(cid)  # Messages sent during the final step are kept, never lost.
             self.store.checkpoint(tid,cid,status,self.last_checkpoint)
-            self.event('done',{'status':status,'task_id':tid})
+            self.event('done',{'status':status,'task_id':tid,'unread':unread})
 
     def stop(self):self.token.stop()

@@ -256,7 +256,25 @@ class WaitingOnUserTests(unittest.TestCase):
         from desktop_buddy.agent import needs_user_reply
         self.assertTrue(needs_user_reply("I've only done part of this. I need two things from you before I can continue."))
         self.assertTrue(needs_user_reply('Which folder should I use?'))
-        self.assertFalse(needs_user_reply('Done. Whatsie 6.1.1 is installed and its launcher is registered.'))
         self.assertFalse(needs_user_reply(''))
+        self.assertFalse(needs_user_reply('Done. Whatsie 6.1.1 is installed and its launcher is registered.'))
+        self.assertFalse(needs_user_reply('Done. I confirmed the file exists and pasted the result into notes.txt.'))
+        self.assertTrue(needs_user_reply('Installed. Anything else?'))
+
+    def test_shrink_tail_terminates_when_truncation_cannot_fit(self):
+        from desktop_buddy.agent import _shrink_tail, TAIL_RESULT_FLOOR
+        tail=[{'role':'tool','content':'x'*10000} for _ in range(4)]
+        self.assertTrue(_shrink_tail(tail,budget=10))
+        self.assertTrue(all(len(m['content'])==TAIL_RESULT_FLOOR for m in tail))
+
+    def test_progress_reader_never_corrupts_long_output(self):
+        import tempfile
+        from desktop_buddy.tools import run_process
+        from desktop_buddy.security import StopToken
+        seen=[]
+        with tempfile.TemporaryDirectory() as cwd:
+            result=run_process(['bash','-c','for i in $(seq 1 2500); do echo line-$i; sleep 0.001; done'],cwd,StopToken(),timeout=60,progress=seen.append)
+        lines=result['output'].splitlines()
+        self.assertEqual(len(lines),2500);self.assertEqual(lines[-1],'line-2500');self.assertTrue(seen)
 
 if __name__=='__main__':unittest.main()

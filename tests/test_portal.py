@@ -26,7 +26,7 @@ class PortalInputTests(unittest.TestCase):
   with self.assertRaises(DesktopError):p.move(4,4,StopToken())
   self.assertFalse(p.events)
 
-class PortalConnectTests(unittest.TestCase):
+class PortalDouble:
  def portal(self,restore_token=''):
   import gi
   from gi.repository import GLib
@@ -41,6 +41,7 @@ class PortalConnectTests(unittest.TestCase):
    return {}
   p.request=request
   return p
+class PortalConnectTests(PortalDouble,unittest.TestCase):
  def test_first_connect_asks_gnome_to_remember_and_stores_token(self):
   p=self.portal();result=p._connect(StopToken())
   devices=next(o for i,m,o in p.requests if m=='SelectDevices')
@@ -51,7 +52,7 @@ class PortalConnectTests(unittest.TestCase):
   devices=next(o for i,m,o in p.requests if m=='SelectDevices')
   self.assertEqual(devices['restore_token'],'tok-old');self.assertEqual(p.saved,['tok-new'])
 
-class PortalGrantWithoutControlTests(PortalConnectTests):
+class PortalGrantWithoutControlTests(PortalDouble,unittest.TestCase):
  def test_fresh_grant_without_remote_interaction_explains_what_to_switch_on(self):
   p=self.portal();p.granted_devices=0
   with self.assertRaises(DesktopError) as ctx:p._connect(StopToken())
