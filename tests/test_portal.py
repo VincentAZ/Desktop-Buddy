@@ -31,7 +31,7 @@ class PortalConnectTests(unittest.TestCase):
   import gi
   from gi.repository import GLib
   p=object.__new__(Portal);p.GLib=GLib;p.session=None;p.stream=None;p.size=None;p.closed_subscription=None
-  p.parent_window='';p.restore_token=restore_token;p.saved=[];p.save_token=p.saved.append;p.requests=[];p.granted_devices=3
+  p.parent_window='';p.restore_token=restore_token;p.saved=[];p.save_token=p.saved.append;p.load_token=None;p.requests=[];p.granted_devices=3
   p.call=lambda *a,**k:None
   p.on_loop=lambda func:1
   def request(interface,method,signature,args,options,token,timeout=120):

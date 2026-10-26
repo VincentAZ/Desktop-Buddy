@@ -33,10 +33,11 @@ class LazyBackend:
 class Portal:
     DEST='org.freedesktop.portal.Desktop'
     PATH='/org/freedesktop/portal/desktop'
-    def __init__(self,parent_window='',restore_token='',save_token=None):
+    def __init__(self,parent_window='',restore_token='',save_token=None,load_token=None):
         self.parent_window=parent_window
-        # GNOME can remember the screen-sharing grant; the token is stored by the app.
-        self.restore_token=restore_token;self.save_token=save_token
+        # GNOME can remember the screen-sharing grant; the token is stored by the app
+        # and re-read before every connect, since GNOME issues a fresh one each time.
+        self.restore_token=restore_token;self.save_token=save_token;self.load_token=load_token
         self.operation_lock=threading.Lock()
         import gi
         gi.require_version('Gio','2.0')
@@ -114,6 +115,7 @@ class Portal:
 
     def _connect(self,token):
         if self.session:return {'connected':True,'stream':self.stream,'logical_size':self.size}
+        if self.load_token:self.restore_token=self.load_token() or ''
         G=self.GLib
         result=self.request('RemoteDesktop','CreateSession','(a{sv})',(),{'session_handle_token':G.Variant('s','buddy_'+uuid.uuid4().hex)},token)
         session=result['session_handle'];self.session=session

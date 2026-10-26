@@ -60,6 +60,9 @@ class BuddyApp(Gtk.Application):
         new=Gio.SimpleAction.new('new-conversation',None);new.connect('activate',lambda *_:self.new_conversation());self.add_action(new)
         search=Gio.SimpleAction.new('search-conversations',None);search.connect('activate',lambda *_:self.focus_history());self.add_action(search)
         settings=Gio.SimpleAction.new('provider-settings',None);settings.connect('activate',lambda *_:self.providers_dialog());self.add_action(settings)
+        # Same code path as the Desktop control button, reachable from a terminal for
+        # testing: gapplication action io.desktopbuddy.App connect-desktop
+        connect=Gio.SimpleAction.new('connect-desktop',None);connect.connect('activate',lambda *_:self.connect_desktop());self.add_action(connect)
         self.set_accels_for_action('app.emergency',['<Primary><Shift>Escape'])
         self.set_accels_for_action('app.new-conversation',['<Primary>n'])
         self.set_accels_for_action('app.search-conversations',['<Primary>k'])
@@ -464,7 +467,7 @@ class BuddyApp(Gtk.Application):
 
     def ensure_backends(self):
         from .desktop import LazyBackend
-        if not self.desktop:self.desktop=LazyBackend(lambda:Portal(self.window_handle,self.store.get('desktop_restore_token',''),lambda value:self.store.set('desktop_restore_token',value)))
+        if not self.desktop:self.desktop=LazyBackend(lambda:Portal(self.window_handle,self.store.get('desktop_restore_token',''),lambda value:self.store.set('desktop_restore_token',value),lambda:self.store.get('desktop_restore_token','')))
         if not self.a11y:self.a11y=LazyBackend(Accessibility)
 
     def approve(self,name,detail,token):
