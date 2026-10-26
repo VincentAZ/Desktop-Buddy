@@ -124,8 +124,16 @@ class Portal:
             self.request('ScreenCast','SelectSources','(oa{sv})',(session,),{'types':G.Variant('u',1),'multiple':G.Variant('b',False),'cursor_mode':G.Variant('u',2)},token)
             started=self.request('RemoteDesktop','Start','(osa{sv})',(session,self.parent_window),{},token)
             streams=started.get('streams',[])
-            if not streams:raise DesktopError('No screen stream was granted.')
-            if int(started.get('devices',0)) & 3 != 3:raise DesktopError('GNOME did not grant keyboard and pointer access.')
+            if not streams:raise DesktopError('No screen was shared. In the GNOME dialog, click the monitor so it is highlighted, then click Share.')
+            if int(started.get('devices',0)) & 3 != 3:
+                if self.restore_token:
+                    # GNOME remembered a grant without remote control. Forget it so
+                    # the dialog comes back and the person can switch control on.
+                    self.restore_token=''
+                    if self.save_token:self.save_token('')
+                    self.close()
+                    return self._connect(token)
+                raise DesktopError('You clicked Share, but “Allow Remote Interaction” was switched off, so Buddy could see the screen but not click or type. Click Desktop control again and switch Allow Remote Interaction on before clicking Share.')
             self.stream=int(streams[0][0]);props=streams[0][1]
             remembered=started.get('restore_token','')
             if remembered and remembered!=self.restore_token:

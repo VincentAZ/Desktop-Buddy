@@ -630,7 +630,7 @@ class BuddyApp(Gtk.Application):
         return token
 
     def connect_desktop(self):
-        self.status.set_text('Look for the GNOME “share your screen” dialog, which may be on another monitor, and click Share. Waiting up to 2 minutes.')
+        self.status.set_text('In the GNOME “Remote Desktop” dialog: switch on Allow Remote Interaction, click your monitor, keep Remember ticked, then click Share. Waiting up to 2 minutes.')
         def work(t):
             self.ensure_backends()
             try:result=self.desktop.connect(t)
