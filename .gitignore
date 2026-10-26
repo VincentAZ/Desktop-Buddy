@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.buddy/
+.test-data/
+docs/research/
+*.egg-info/
+workspace/
+build/
+dist/

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desktop-buddy"
+version = "0.2.0"
+description = "A single-agent, provider-independent Linux desktop assistant"
+requires-python = ">=3.11"
+dependencies = ["requests>=2.31", "Pillow>=10"]
+
+[project.scripts]
+desktop-buddy = "desktop_buddy.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["desktop_buddy*"]
+
+[tool.setuptools.package-data]
+desktop_buddy = ["skills/*.md"]

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Desktop Buddy
+Comment=Local Linux desktop assistant
+Exec=desktop-buddy
+Icon=computer
+Terminal=false
+Categories=Utility;
