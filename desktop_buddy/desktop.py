@@ -88,7 +88,7 @@ class Portal:
             until=time.monotonic()+timeout
             while not done.wait(.05):
                 token.check()
-                if time.monotonic()>until:raise DesktopError('GNOME asked for permission to share your screen, but nobody clicked Share within 2 minutes. The dialog may be on another monitor. Try again when you can see it.')
+                if time.monotonic()>until:raise DesktopError('GNOME did not finish its permission dialog within 2 minutes. If you never saw a dialog, GNOME itself is stuck: switch to another workspace and back (Ctrl+Alt+Down, then Ctrl+Alt+Up) and try again. If that does not help, log out and back in. If you did see it, it may be on another monitor.')
             code,data=result[0]
             if code==1:raise DesktopError('Desktop permission was cancelled by the user.')
             if code!=0:raise DesktopError('GNOME could not create this desktop session. Unlock the workstation, focus Desktop Buddy, and retry. No restrictions were changed.')
