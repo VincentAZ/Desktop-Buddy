@@ -365,6 +365,8 @@ class BuddyApp(Gtk.Application):
             if m.get('tool_calls'):self.append('TOOLS',json.dumps(m['tool_calls'],ensure_ascii=False,indent=2))
             for image in m.get('images',[]):self.append_image(image)
         self.transcript.append(self.stream_scroll)
+        # Land at the newest message once the cards have been laid out.
+        GLib.timeout_add(80,self.scroll_end)
         tasks=self.store.tasks(self.cid)
         self.task_usage={}
         if tasks:

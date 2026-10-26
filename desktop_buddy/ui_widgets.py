@@ -59,6 +59,8 @@ textview { padding: 4px; }
 .welcome-mark { background: #e1e9d9; color: #315c49; border-radius: 20px; padding: 18px; }
 .suggestion { background: #ffffff; border: 1px solid #dce2d6; padding: 16px; }
 .suggestion:hover { background: #eef2e9; }
+button.jump-to-end { background: #ffffff; color: #263b35; border: 1px solid #c9d2c6; border-radius: 999px; padding: 10px; min-width: 20px; min-height: 20px; box-shadow: 0 3px 12px alpha(#263b35, .18); }
+button.jump-to-end:hover { background: #eef2e9; }
 .status { color: #65736b; font-size: 12px; }
 .status.attention { color: #9c4139; font-size: 13px; font-weight: 700; }
 .stop-button { color: #9c4139; }
@@ -196,7 +198,32 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.transcript = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
     app.transcript.add_css_class('conversation')
     app.transcript_scroll = scroller(app.transcript, minimum=140)
-    main.append(app.transcript_scroll)
+    conversation = Gtk.Overlay()
+    conversation.set_child(app.transcript_scroll)
+    app.jump_button = Gtk.Button.new_from_icon_name('go-bottom-symbolic')
+    app.jump_button.add_css_class('jump-to-end')
+    app.jump_button.set_tooltip_text('Jump to the end of the conversation')
+    app.jump_button.update_property([Gtk.AccessibleProperty.LABEL], ['Jump to the end of the conversation'])
+    app.jump_button.set_halign(Gtk.Align.CENTER)
+    app.jump_button.set_valign(Gtk.Align.END)
+    app.jump_button.set_margin_bottom(14)
+    app.jump_button.set_visible(False)
+    app.jump_button.connect('clicked', lambda *_: app.scroll_end())
+    conversation.add_overlay(app.jump_button)
+    adjustment = app.transcript_scroll.get_vadjustment()
+    # Stay pinned to the newest message while content grows (opening a long
+    # conversation, streaming a reply) until the person scrolls up themselves.
+    pinned = {'end': True}
+    def update_jump(*_):
+        away = adjustment.get_upper() - adjustment.get_page_size() - adjustment.get_value()
+        pinned['end'] = away < 120
+        app.jump_button.set_visible(away > 120)
+    def content_changed(*_):
+        if pinned['end']:adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+        update_jump()
+    adjustment.connect('value-changed', update_jump)
+    adjustment.connect('changed', content_changed)
+    main.append(conversation)
     app.stream_view = text_view()
     app.stream_scroll = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     app.stream_scroll.add_css_class('message')
