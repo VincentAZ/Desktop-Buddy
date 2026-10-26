@@ -12,7 +12,7 @@ from PIL import Image
 gi.require_version('Gtk','4.0')
 gi.require_version('Gdk','4.0')
 from gi.repository import Gtk,Gdk,Gio,GLib
-from .agent import Agent
+from .agent import Agent,needs_user_reply
 from .browser import Browser
 from .desktop import Portal,Accessibility
 from .providers import Provider
@@ -405,13 +405,15 @@ class BuddyApp(Gtk.Application):
     def emit(self,name,data):GLib.idle_add(self.on_event,name,data)
 
     def on_event(self,name,data):
-        if name=='status':self.status.set_text(self.redactor.text(str(data)))
+        if name=='status':self.status.remove_css_class('attention');self.status.set_text(self.redactor.text(str(data)))
         elif name=='stream':
             self.stream_scroll.set_visible(True)
             # Show the entire accumulated, redacted prefix, never individual raw chunks.
             self.stream_view.get_buffer().set_text(self.redactor.stream_text(str(data))[-8000:])
-        elif name=='message':self.append('BUDDY',data['content']);self.stream_view.get_buffer().set_text('');self.stream_scroll.set_visible(False)
-        elif name in ('tool','result','error'):self.append(name.upper(),data if isinstance(data,str) else json.dumps(data,indent=2,ensure_ascii=False))
+        elif name=='message':self.last_reply=data['content'];self.append('BUDDY',data['content']);self.stream_view.get_buffer().set_text('');self.stream_scroll.set_visible(False)
+        elif name in ('tool','result','error'):
+            self.append(name.upper(),data if isinstance(data,str) else json.dumps(data,indent=2,ensure_ascii=False))
+            if name=='error':self.alert(str(data).strip().splitlines()[0][:200] if str(data).strip() else 'Something went wrong. See the message above.')
         elif name=='usage':self.add_usage(data)
         elif name=='screenshot':
             self.preview.set_filename(str(data));self.preview_box.set_visible(True)
@@ -424,9 +426,26 @@ class BuddyApp(Gtk.Application):
             self.spinner.stop()
             self.run_button.set_sensitive(True);self.history.set_sensitive(True);self.workspace.set_sensitive(True)
             self.recovery_button.set_visible(data['status'] in ('failed','cancelled','interrupted'))
-            self.status.set_text({'complete':'Finished · ready for your next message', 'failed':'Something needs attention. See the message above.', 'cancelled':'Stopped · your progress is saved'}.get(data['status'],'Ready when you are'))
-
+            waiting=data['status']=='complete' and needs_user_reply(getattr(self,'last_reply',''))
+            if waiting:self.alert('Buddy needs something from you · read the message above and reply')
+            elif data['status']=='failed':self.alert('Something went wrong. See the message above.')
+            else:
+                self.status.remove_css_class('attention')
+                self.status.set_text({'complete':'Finished · ready for your next message','cancelled':'Stopped · your progress is saved'}.get(data['status'],'Ready when you are'))
+                if data['status']=='complete':self.notify('Finished','Buddy finished the task.')
         return False
+
+    def alert(self,text):
+        """Something needs the person: say it in the status line, in red, and on the desktop."""
+        text=self.redactor.text(text)
+        self.status.add_css_class('attention');self.status.set_text(text)
+        self.notify('Desktop Buddy needs you',text)
+
+    def notify(self,title,body):
+        if getattr(self,'window',None) and self.window.is_active():return
+        try:
+            note=Gio.Notification.new(title);note.set_body(body);self.send_notification('buddy-status',note)
+        except Exception:pass
 
     def add_usage(self, data):
         for key in ('input_tokens', 'output_tokens', 'elapsed_seconds', 'estimated_cost_usd', 'reported_cost_usd'):

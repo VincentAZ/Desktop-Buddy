@@ -251,4 +251,12 @@ class AgentTests(Sandbox):
         provider.complete=Mock(side_effect=AssertionError('Must not infer'))
         cid=self.store.conversation();Agent(self.store,self.registry(approve=lambda *_:False),provider).run(cid,'hello');provider.complete.assert_not_called()
 
+class WaitingOnUserTests(unittest.TestCase):
+    def test_question_or_request_counts_as_waiting(self):
+        from desktop_buddy.agent import needs_user_reply
+        self.assertTrue(needs_user_reply("I've only done part of this. I need two things from you before I can continue."))
+        self.assertTrue(needs_user_reply('Which folder should I use?'))
+        self.assertFalse(needs_user_reply('Done. Whatsie 6.1.1 is installed and its launcher is registered.'))
+        self.assertFalse(needs_user_reply(''))
+
 if __name__=='__main__':unittest.main()

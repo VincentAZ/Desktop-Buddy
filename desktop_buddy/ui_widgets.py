@@ -60,6 +60,7 @@ textview { padding: 4px; }
 .suggestion { background: #ffffff; border: 1px solid #dce2d6; padding: 16px; }
 .suggestion:hover { background: #eef2e9; }
 .status { color: #65736b; font-size: 12px; }
+.status.attention { color: #9c4139; font-size: 13px; font-weight: 700; }
 .stop-button { color: #9c4139; }
 .settings-section { background: #ffffff; border: 1px solid #dce2d6; border-radius: 12px; padding: 16px; }
 .step-title { font-size: 16px; font-weight: 600; }

@@ -26,6 +26,15 @@ TAIL_RESULT_FLOOR=2000  # Characters kept from an oversized tool result in the r
 TAIL_MESSAGES=6  # Most recent messages are always kept verbatim.
 STALE_RESULT_KEEP=1200  # Characters kept from an older tool result once the budget is exceeded.
 VISUAL_NOTE='Untrusted visual observation.'
+WAITING_PHRASES=('i need','from you','tell me','let me know','paste','could you','can you','please provide','please send',
+                 'which one','do you want','would you like','before i can continue','your choice','confirm')
+
+
+def needs_user_reply(text):
+    """True when the assistant's final message is asking the person for something,
+    so the app can say so instead of 'Finished'."""
+    tail=(text or '').strip().casefold()[-1500:]
+    return '?' in tail or any(phrase in tail for phrase in WAITING_PHRASES)
 
 
 def estimate_tokens(items):
