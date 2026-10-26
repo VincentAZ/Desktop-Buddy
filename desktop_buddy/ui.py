@@ -625,12 +625,21 @@ class BuddyApp(Gtk.Application):
     def connect_desktop(self):
         self.status.set_text('Look for the GNOME “share your screen” dialog, which may be on another monitor, and click Share. Waiting up to 2 minutes.')
         def work(t):
-            self.ensure_backends();result=self.desktop.connect(t);self.emit('result',result);self.emit('status','Desktop connected through GNOME consent')
+            self.ensure_backends()
+            try:result=self.desktop.connect(t)
+            except Exception as e:
+                self.store.audit('desktop-control','connect_failed',{'error':str(e)});raise
+            self.store.audit('desktop-control','connected',{k:result.get(k) for k in ('remembered','logical_size')})
+            self.emit('result',result)
+            self.emit('status','Desktop control connected.' + (' GNOME will remember this, so next time there is no dialog.' if result.get('remembered') else ' GNOME did not offer to remember this; it will ask again next time.'))
         self.auxiliary(work)
 
     def observe(self):
         def work(t):
-            self.ensure_backends();result=self.desktop.screenshot(self.store.root/'screenshots'/'observation.png',t)
+            self.ensure_backends()
+            try:result=self.desktop.screenshot(self.store.root/'screenshots'/'observation.png',t)
+            except Exception as e:
+                self.store.audit('desktop-control','screenshot_failed',{'error':str(e)});raise
             self.emit('screenshot',result['path']);self.emit('result',self.a11y.inspect(depth=1));self.emit('status','Desktop observed locally · no model call made')
         self.auxiliary(work)
 
