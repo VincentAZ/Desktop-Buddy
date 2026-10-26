@@ -184,6 +184,7 @@ class Agent:
                     if message.pop('images',None):message['content']=message.get('content','')+' [Historical image omitted: current model has no vision.]'
             failures=Counter()
             self.registry.progress=lambda text:self.event('status',text)
+            self.registry.attention=lambda text:self.event('attention',text)
             for turn in range(self.max_rounds):
                 self.token.check()
                 messages[0]['content']=system.replace(f'\nMode: {initial_mode}.',f'\nMode: {policy.mode}.')

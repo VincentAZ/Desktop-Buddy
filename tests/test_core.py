@@ -277,4 +277,17 @@ class WaitingOnUserTests(unittest.TestCase):
         lines=result['output'].splitlines()
         self.assertEqual(len(lines),2500);self.assertEqual(lines[-1],'line-2500');self.assertTrue(seen)
 
+class PasswordPromptTests(unittest.TestCase):
+    def test_waiting_for_password_is_true_until_pkexec_spawns_its_command(self):
+        import subprocess
+        from desktop_buddy.tools import _waiting_for_password
+        quiet=subprocess.Popen(['sleep','2'])
+        try:self.assertTrue(_waiting_for_password(quiet))
+        finally:quiet.kill();quiet.wait()
+        parent=subprocess.Popen(['bash','-c','sleep 2 & wait'])
+        try:
+            import time; time.sleep(.2)
+            self.assertFalse(_waiting_for_password(parent))
+        finally:parent.kill();parent.wait()
+
 if __name__=='__main__':unittest.main()

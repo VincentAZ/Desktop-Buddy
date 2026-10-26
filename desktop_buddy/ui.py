@@ -414,6 +414,7 @@ class BuddyApp(Gtk.Application):
 
     def on_event(self,name,data):
         if name=='status':self.status.remove_css_class('attention');self.status.set_text(self.redactor.text(str(data)))
+        elif name=='attention':self.alert(str(data))
         elif name=='stream':
             self.stream_scroll.set_visible(True)
             # Show the entire accumulated, redacted prefix, never individual raw chunks.
