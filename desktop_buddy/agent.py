@@ -244,6 +244,23 @@ class Agent:
         return (not tool.mutation or name in ('browser.navigate','mcp.call') or
                 name=='http.request' and arguments.get('method','GET')=='GET')
 
+    def source_retries(self,failures):
+        """Host-driven retries of failed source reads when a task is continued.
+
+        A read has no external effect, so repeating it exactly is always safe;
+        the person pressing Continue task must not depend on the model deciding
+        to try again. Identities that are not the literal call (file reads are
+        keyed by path only) are left to the model.
+        """
+        calls=[]
+        for n,identity in enumerate(failures):
+            try:name,args=json.loads(identity)
+            except (ValueError,TypeError):continue
+            if not isinstance(name,str) or not isinstance(args,dict) or name.startswith('fs.'):continue
+            if json.dumps([name,args],sort_keys=True)!=identity:continue
+            calls.append({'id':f'host-retry-{n}','name':'run_tool','arguments':{'name':name,'arguments':args}})
+        return calls
+
     def require_source_recovery(self,call,failures):
         if not failures:return
         envelope=call['arguments'];name=envelope['name'];arguments=envelope.get('arguments',{})
@@ -361,7 +378,14 @@ class Agent:
                     # Do not stream an unverified completion claim while a known
                     # source failure is outstanding; publish the checked outcome.
                     if name!='stream' or not unresolved:self.event(name,data)
-                answer,usage=self.provider.complete(request,ENVELOPES if c.use_tools else [],self.token,provider_event,policy.local_only)
+                replay=self.source_retries(source_failures) if turn==0 and resume and c.use_tools else []
+                if replay:
+                    # Continue task re-runs the failed reads itself before the model speaks again.
+                    answer={'role':'assistant','content':'','tool_calls':replay};usage={}
+                    self.store.audit(tid,'source_retry',{'operations':[call['arguments']['name'] for call in replay]})
+                    self.event('status','Checking the step that failed earlier…')
+                else:
+                    answer,usage=self.provider.complete(request,ENVELOPES if c.use_tools else [],self.token,provider_event,policy.local_only)
                 self.token.check()
                 answer=self.store.redactor.clean(answer)
                 calls=answer.get('tool_calls',[])

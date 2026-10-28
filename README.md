@@ -18,7 +18,7 @@
 Desktop Buddy is built for people who want results, not an agent control panel. IT sets up the assistant; Jane describes the outcome and follows the work in a normal conversation. It runs as a standalone GTK app with local history, clear activity records, real cancellation, and three plain-language control modes.
 
 > [!NOTE]
-> Desktop Buddy targets Ubuntu 26.04 with GNOME Wayland. Version 0.4.3: one-click app connections for 26 services plus any pasted server address, a real "Just do it" mode, screenshot-based control of apps that expose no accessibility information, and an optional background browser. See [what is verified and what is not](docs/DELIVERY.md).
+> Desktop Buddy targets Ubuntu 26.04 with GNOME Wayland. Version 0.4.5: one-click app connections for 26 services plus any pasted server address, a real "Just do it" mode, screenshot-based control of apps that expose no accessibility information, and an optional background browser. See [what is verified and what is not](docs/DELIVERY.md).
 
 ## Why it feels different
 

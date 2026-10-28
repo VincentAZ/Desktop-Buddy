@@ -42,6 +42,9 @@ threading.Thread(target=server.serve_forever,daemon=True).start()
 app=BuddyApp(Path(profile.name)/'state');app.credentials=Credentials(app.redactor);app.mcp=MCPManager(app.store,app.credentials)
 app.store.set('local_only',False)
 phase=0;started=time.monotonic();result={};dialog=None;editor=None;consumer_id=None
+# This fixture covers a build that ships no Google key (IT pastes one); the release build ships one.
+from desktop_buddy import publisher
+publisher.CLIENTS.clear()
 google_item=next(i for i in CATALOG if i['id']=='google-gmail')
 google_original_url=google_item['url']
 

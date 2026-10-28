@@ -59,6 +59,8 @@ class PreferencesDialog:
         controls=Gtk.Box(spacing=10)
         self.it_button=button('IT setup…',lambda *_:self.show_it(not self.it_setup))
         controls.append(self.it_button);controls.append(Gtk.Box(hexpand=True))
+        from . import __version__
+        controls.append(label('Desktop Buddy '+__version__,'muted'))
         controls.append(button('Done',lambda *_:self.close(),'suggested-action'));outer.append(controls)
         self.window.present()
 

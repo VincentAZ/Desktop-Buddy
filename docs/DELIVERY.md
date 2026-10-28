@@ -1,4 +1,4 @@
-# Desktop Buddy 0.4.3 — what works, what was verified, what is left
+# Desktop Buddy 0.4.5 — what works, what was verified, what is left
 
 October 27, 2026. This replaces the running log that used to live here; the older evidence directories under `.test-data/` are untouched.
 
@@ -6,18 +6,18 @@ October 27, 2026. This replaces the running log that used to live here; the olde
 
 Desktop Buddy is a local GTK app with no Buddy account. Whoever sets up the computer picks an AI service once (OpenAI, Anthropic, xAI, Moonshot, OpenRouter, or LM Studio/Ollama on the machine) under Settings → IT setup. Everyone else types what they want. Buddy works with files, runs commands, opens apps, clicks and types on the real screen, browses in its own Chrome window (visible or in the background), and uses connected apps such as Notion, Stripe, Vercel or Gmail. Three choices beside Send: Discuss only, Ask before acting, Just do it.
 
-## What changed in 0.4.0–0.4.3
+## What changed in 0.4.0–0.4.5
 
 | Requirement | Before | Now |
 |---|---|---|
 | Connect MCP servers in one click | 6 services enabled; Vercel, Figma, GitLab, Google and others showed "Not available yet" | 26 services self-register and open sign-in on one click; 5 public services connect instantly; GitHub takes a pasted token; any server address or local command can be pasted and Buddy detects whether it needs sign-in |
-| Gmail / Calendar / Google | Blocked behind a JSON "registration bundle" import; Google's MCP servers refuse every call until a project is enrolled in Google's preview programme | Google (and Slack, Asana, HubSpot, Zendesk, Box, Figma) need a publisher-registered client because those providers refuse self-registration. The client ships in `desktop_buddy/publisher.py` or is pasted once under Settings → IT setup → App sign-in keys (numbered steps, link to the provider page, two boxes). After that they show a normal Connect button. Gmail and Calendar are served by Buddy's own tools on Google's regular APIs (0.4.3), so they work for any signed-in account with no preview enrolment; a real mailbox search was verified live |
+| Gmail / Calendar / Google | Blocked behind a JSON "registration bundle" import; Google's MCP servers refuse every call until a project is enrolled in Google's preview programme | Google (and Slack, Asana, HubSpot, Zendesk, Box, Figma) need a publisher-registered client because those providers refuse self-registration. The client ships in `desktop_buddy/publisher.py` or is pasted once under Settings → IT setup → App sign-in keys (numbered steps, link to the provider page, two boxes). After that they show a normal Connect button. Gmail and Calendar are served by Buddy's own tools on Google's regular APIs (0.4.5), so they work for any signed-in account with no preview enrolment; a real mailbox search was verified live |
 | Native control of Linux apps | Input only through accessibility-pinned controls; apps without accessibility "unsupported"; remembered GNOME grant appeared broken | Two paths: verified accessibility control when available, otherwise click/drag/type at positions read from a screenshot. Screen sharing connects itself when GNOME remembered the grant (it does, see below) |
 | Browser or headless | Visible only; browser refused for every catalog website even when nothing was connected | Settings → "Show the browser window while Buddy browses" toggles background browsing. Browser is refused only for websites of apps that are actually connected |
 | YOLO as an option | "Fewer routine prompts" skipped only app-launch and window prompts | "Just do it" approves everything without prompts, after one plain-language confirmation. Stop, Discuss only, Keep Buddy offline and credential-path protection are unchanged |
 | Assistant understands Buddy | Help text described the old gates | Help topics, status report and system guidance rewritten for the new behaviour |
 
-Version is shown in the window title; older windows must be closed and reopened to run this code.
+The version is shown under "Desktop Buddy" at the top of the main window and at the bottom of Settings; older windows must be closed and reopened to run this code.
 
 ## Verified on this workstation (October 27, 2026)
 

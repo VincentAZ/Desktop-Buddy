@@ -257,9 +257,11 @@ class MCPTests(unittest.TestCase):
             self.assertNotIn('shipped-private-secret',' '.join(r[0] for r in self.store.db.execute('SELECT value FROM settings')))
         with patch.dict(publisher.CLIENTS,{},clear=True):
             self.assertFalse(consumer_available(gmail,self.manager.registrations))
-        # The release ships a real Google client, so Gmail is connectable out of the box.
-        self.assertTrue(consumer_available(gmail,self.manager.registrations))
-        self.assertEqual(self.manager.registrations.source(gmail),'shipped')
+        # A release build carries the Google client (publisher_local.py, not in git);
+        # a plain checkout does not. Either way the card matches what the build has.
+        shipped=bool(publisher.builtin_client('google-gmail'))
+        self.assertEqual(consumer_available(gmail,self.manager.registrations),shipped)
+        self.assertEqual(self.manager.registrations.source(gmail),'shipped' if shipped else '')
 
     def test_it_pasted_client_covers_every_google_service_and_can_be_forgotten(self):
         registrations=self.manager.registrations

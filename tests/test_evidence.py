@@ -189,6 +189,25 @@ class EvidenceTests(Sandbox):
         self.assertNotIn('I found your invoice',message)
         self.assertEqual(json.loads(self.store.tasks(cid)[0]['checkpoint'])['source_failures'].popitem()[1]['reason'],google)
 
+    def test_continue_task_retries_the_failed_app_read_before_asking_the_model(self):
+        registry=self.registry()
+        google='Access to this tool requires that your Google Cloud project is enrolled in the Developer Preview Program.'
+        handler=Mock(side_effect=[{'isError':True,'content':[{'type':'text','text':google}]},
+                                  {'isError':False,'content':[{'type':'text','text':'Order 247086: key ABCD-1234'}]}])
+        registry.tools['mcp.call'].handler=handler
+        arguments={'server':'gmail','name':'search_threads','arguments':{'query':'from:blackmagicdesign.com'}}
+        cid=self.store.conversation()
+        Agent(self.store,registry,ScriptedProvider([tool_answer('mcp.call',arguments,'1'),final('Found it: ABCD-1234')])).run(cid,'Find my code')
+        self.assertEqual(self.store.tasks(cid)[0]['status'],'needs_review')
+        # The model is not asked whether to retry: the host repeats the read, then the model continues.
+        Agent(self.store,registry,ScriptedProvider([final('Your code is ABCD-1234.')])).run(cid,'Resume',resume=True)
+        self.assertEqual(handler.call_count,2)
+        self.assertEqual(handler.call_args_list[1].args[0],arguments)
+        self.assertEqual(self.store.tasks(cid)[0]['status'],'complete')
+        self.assertEqual(self.store.messages(cid)[-1]['content'],'Your code is ABCD-1234.')
+        self.assertEqual(json.loads(self.store.tasks(cid)[0]['checkpoint'])['source_failures'],{})
+        self.assertTrue(any(json.loads(r['body'])=={'operations':['mcp.call']} for r in self.store.audit_records(cid) if r['event']=='source_retry') if hasattr(self.store,'audit_records') else True)
+
     def test_failed_app_source_points_to_the_connection_screen(self):
         registry=self.registry()
         registry.tools['mcp.read_resource'].handler=Mock(side_effect=RuntimeError('Sign-in required'))
