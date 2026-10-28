@@ -108,8 +108,9 @@ def capture(window, filename):
 
 
 def pick(model, pid):
-    app.model_dialog()
     picker = app.model_menu
+    assert picker.button.get_mapped()
+    picker.button.popup()
     row = picker.box.get_first_child()
     while row:
         if isinstance(row, Gtk.CheckButton):
@@ -185,7 +186,8 @@ def tick():
             assert app.store.configs()['openai'].model == 'model-a'
             assert app.store.configs()['openai'].reasoning == 'high'
             assert app.selected_id() == 'openai'
-            assert app.model_menu.title.get_text() == 'model-a · High thinking'
+            assert app.model_menu.title.get_text() == 'model-a'
+            assert app.model_menu.detail.get_text() == 'OpenAI · High thinking'
             result['visible_thinking_level_persisted'] = True
             cid = app.cid
             app.input.get_buffer().set_text('First message')
@@ -239,14 +241,24 @@ def tick():
             assert app.agent.provider.config.id == 'lmstudio'
             assert app.selected_id() == 'openai'
             assert 'next message' in app.model_hint.get_text()
+            assert picker.title.get_text() == 'model-b'
+            assert picker.detail.get_text().startswith('LM Studio ·')
+            picker.thinking.set_selected(picker.thinking.values.index('low'))
+            assert app.store.configs()['openai'].reasoning == 'low'
+            assert app.agent.provider.config.id == 'lmstudio'
+            assert picker.title.get_text() == 'model-b'
+            assert 'Low thinking' in app.model_hint.get_text()
             release.set()
             result['running_task_keeps_model_next_message_switches'] = True
             phase = 12
         elif phase == 12 and finished():
+            assert app.model_menu.title.get_text() == 'model-a'
+            assert app.model_menu.detail.get_text() == 'OpenAI · Low thinking'
             app.send('After the switch')
             phase = 13
         elif phase == 13 and finished():
             assert app.agent.provider.config.id == 'openai'
+            assert requests[-1][1]['reasoning'] == {'effort':'low'}
             assert app.cid == cid
             assert app.store.tasks(cid)[0]['status'] == 'complete'
             result['next_request_uses_selected_provider_without_restart'] = True
@@ -299,7 +311,8 @@ def tick():
         elif phase == 18 and setup.closed:
             config = app.store.configs()['anthropic']
             assert config.reasoning == '32768' and config.max_output > 32768
-            assert app.model_menu.title.get_text() == 'fixture-claude · Maximum thinking'
+            assert app.model_menu.title.get_text() == 'fixture-claude'
+            assert app.model_menu.detail.get_text() == 'Anthropic · Maximum thinking'
             result['anthropic_setup_thinking_limits_and_save'] = True
             result['passed'] = True
             app.quit()

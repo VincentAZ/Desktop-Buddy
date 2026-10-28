@@ -95,7 +95,7 @@ def main():
         report['checks']['desktop-display'] = preflight
         save()
         scripts = ['test-computer-access-ui.py', 'test-command-review-ui.py', 'test-file-ui.py', 'test-jane-ui.py', 'test-first-use-ui.py', 'test-mcp-ui.py', 'test-yolo-ui.py', 'test-redesign-ui.py',
-                   'test-model-ui.py', 'test-ui.py', 'test-conversation-ui.py',
+                   'test-model-ui.py', 'test-appearance-ui.py', 'test-theme-surfaces-ui.py', 'test-ui.py', 'test-conversation-ui.py',
                    'test-accessibility-control.py', 'test-accessible-text-ui.py', 'test-rejected-text-ui.py', 'test-pointer-target-ui.py', 'test-physical-workflow.py']
         for name in scripts:
             lock=screen_activity_probe()

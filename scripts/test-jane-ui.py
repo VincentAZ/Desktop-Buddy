@@ -39,26 +39,26 @@ def tick():
         if time.monotonic()-started>25:raise TimeoutError(f'Phase {phase}')
         if phase==0 and capture(app.window,'home.png'):
             text=mapped_text(app.window)
-            assert not app.model_menu.button.get_mapped()
-            assert 'fixture-internal-model-id' not in text
+            assert app.model_menu.button.get_mapped()
+            assert 'fixture-internal-model-id' in text
             assert 'YOLO' not in text
             assert 'Execution' not in text
             assert app.mode.get_selected_item().get_string()=='Ask before acting'
-            assert app.model_menu.button.get_parent() is None
+            assert app.model_menu.button.get_parent().has_css_class('toolbar')
             settings=app.settings_dialog().controller;phase=1
         elif phase==10:
             assert app.model_menu.button.get_mapped()
-            app.model_menu.button.popup();phase=11
+            settings.open_model_menu();phase=11
         elif phase==11 and capture(app.model_menu.popover,'assistant.png'):
             menu=app.model_menu
             assert not menu.advanced.get_expanded()
-            assert not menu.answering.get_expanded()
-            assert not any(w.get_mapped() for w in walk(menu.box) if isinstance(w,Gtk.Button) and w.get_label()=='Add or set up a model…')
+            assert menu.thinking.get_mapped()
+            assert any(w.get_mapped() for w in walk(menu.box) if isinstance(w,Gtk.Button) and w.get_label()=='Add or set up a model…')
             menu.advanced.set_expanded(True);phase=12
         elif phase==12:
             assert any(w.get_mapped() for w in walk(app.model_menu.box) if isinstance(w,Gtk.Button) and w.get_label()=='Add or set up a model…')
             app.model_menu.popover.popdown()
-            settings.close();assert app.model_menu.button.get_parent() is None
+            assert app.model_menu.button.get_parent().has_css_class('toolbar')
             result['it_can_open_assistant_switch_and_vendor_setup']=True
             for _ in range(8):app.append('RESULT','{"verified":true}')
             assert app.activity_group.count==8
@@ -74,7 +74,7 @@ def tick():
             assert 'Internet access' in text and 'Where Buddy saves your work' in text
             settings.offline.set_active(True);assert app.local.get_active();assert app.store.get('local_only')
             settings.offline.set_active(False);assert not app.local.get_active()
-            settings.close();assert not app.model_menu.button.get_mapped()
+            settings.close();assert app.model_menu.button.get_mapped()
             settings=app.settings_dialog().controller;phase=2
         elif phase==2:
             assert not settings.it_setup

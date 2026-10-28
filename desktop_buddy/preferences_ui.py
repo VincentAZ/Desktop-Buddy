@@ -6,6 +6,7 @@ from gi.repository import Gtk
 from .model_ui import window,section
 from .ui_widgets import label,button,scroller
 from .state import PROVIDERS
+from .themes import THEMES
 
 
 class PreferencesDialog:
@@ -19,6 +20,16 @@ class PreferencesDialog:
         self.stack.add_named(scroller(body,minimum=240),'everyday')
         assistant=section('Your assistant');self.assistant_status=label('','muted',wrap=True);assistant.append(self.assistant_status)
         self.refresh_assistant();body.append(assistant)
+        assistant.append(button('Change model or thinking…',lambda *_:self.open_model_menu()))
+        appearance=section('Appearance')
+        self.theme_ids=list(THEMES)
+        self.theme=Gtk.DropDown.new_from_strings([name for name,_palette in THEMES.values()])
+        self.theme.update_property([Gtk.AccessibleProperty.LABEL],['Theme'])
+        self.refresh_theme()
+        self.theme.connect('notify::selected',lambda *_:app.apply_theme(self.theme_ids[self.theme.get_selected()]))
+        appearance.append(self.theme)
+        appearance.append(label('Applies immediately to all Buddy windows and is remembered next time.','muted',wrap=True))
+        body.append(appearance)
         privacy=section('Internet access')
         self.offline=Gtk.CheckButton(label='Keep Buddy offline')
         self.offline.set_active(app.local.get_active())
@@ -46,7 +57,7 @@ class PreferencesDialog:
         body.append(personal)
         advanced=section('Assistants and vendors')
         advanced.append(label('For the IT manager setting up this installation. Choose a saved assistant or configure a different vendor. Changes apply to the next task; a running task keeps its current assistant.','muted',wrap=True))
-        advanced.append(app.model_menu.button);self.assistant_controls=advanced
+        advanced.append(button('Change model or thinking…',lambda *_:self.open_model_menu()))
         advanced.append(button('Add or configure a vendor…',lambda *_:app.providers_dialog()))
         keys=section('App sign-in keys')
         keys.append(label('Google, Slack, Asana, HubSpot, Zendesk, Box and Figma only accept sign-in through a client registered by the Desktop Buddy team. Paste it once here and everyone on this computer can simply choose Connect.','muted',wrap=True))
@@ -121,6 +132,13 @@ class PreferencesDialog:
         else:
             self.assistant_status.set_text('Your IT team has not finished assistant setup. Ask them to open IT setup below and choose an assistant. You do not need to find connection keys yourself.')
 
+    def refresh_theme(self):
+        self.theme.set_selected(self.theme_ids.index(self.app.theme))
+
+    def open_model_menu(self):
+        self.close()
+        self.app.model_menu.button.popup()
+
     def refresh_folder(self):
         path=Path(self.app.workspace.get_text()).expanduser()
         from .paths import default_workspace
@@ -142,7 +160,5 @@ class PreferencesDialog:
     def close(self,*_):
         for widget,ident in self.handlers:widget.disconnect(ident)
         self.handlers=[]
-        if self.app.model_menu.button.get_parent() is self.assistant_controls:
-            self.assistant_controls.remove(self.app.model_menu.button)
         self.app.preferences_window=None
         self.window.destroy();return True

@@ -24,7 +24,8 @@ from .mcp_client import MCPManager
 from .paths import default_data_dir, default_workspace
 from .sessions import Session, DesktopLease, session_property
 
-from .ui_widgets import CSS, build_workspace, welcome, message_card, activity_card, image_card
+from .ui_widgets import build_workspace, welcome, message_card, activity_card, image_card
+from .themes import DEFAULT_THEME, THEMES, theme_css
 def text_view(editable=False):
     v=Gtk.TextView(editable=editable,wrap_mode=Gtk.WrapMode.WORD_CHAR)
     v.set_left_margin(8);v.set_right_margin(8);v.set_top_margin(8);v.set_bottom_margin(8)
@@ -113,8 +114,9 @@ class BuddyApp(Gtk.Application):
         if hasattr(self,'window'):self.window.present();return
         display=Gdk.Display.get_default()
         if not display:raise RuntimeError('No physical desktop display. Launch inside the GNOME session.')
-        Gtk.Settings.get_default().set_property('gtk-application-prefer-dark-theme',False)
-        css=Gtk.CssProvider();css.load_from_data(CSS.encode());Gtk.StyleContext.add_provider_for_display(display,css,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.theme_provider=Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_display(display,self.theme_provider,Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.apply_theme(self.store.get('theme',DEFAULT_THEME))
         self.window=Gtk.ApplicationWindow(application=self,title='Desktop Buddy v'+__version__,default_width=self.store.get('window_width',1180),default_height=self.store.get('window_height',860))
         self.window.connect('close-request',self.close_requested)
         default = default_workspace(self.data_dir)
@@ -142,6 +144,14 @@ class BuddyApp(Gtk.Application):
         return False
 
     def selected_id(self):return self.provider_ids[self.selector.get_selected()]
+
+    def apply_theme(self,name):
+        self.theme=name if name in THEMES else DEFAULT_THEME
+        Gtk.Settings.get_default().set_property('gtk-application-prefer-dark-theme',self.theme=='midnight')
+        self.theme_provider.load_from_data(theme_css(self.theme).encode())
+        self.store.set('theme',self.theme)
+        for key,row in getattr(self,'theme_choices',{}).items():row.set_active(key==self.theme)
+        if getattr(self,'preferences_window',None):self.preferences_window.controller.refresh_theme()
 
     def provider_changed(self,*_):
         pid=self.selected_id();self.store.set('provider',pid);c=self.store.configs()[pid]
@@ -196,14 +206,17 @@ class BuddyApp(Gtk.Application):
         if getattr(self,'model_menu',None):self.model_menu.refresh()
 
     def update_model_hint(self):
+        if getattr(self,'model_menu',None):self.model_menu.refresh_title()
         if not hasattr(self,'model_hint'):return
         active=getattr(self,'active_model',None)
         if active:
             selected=self.store.configs()[self.selected_id()]
-            different=(active.id,active.model)!=(selected.id,selected.model)
-            text=f'Right now Buddy is using {active.model}. Your new choice is used from your next message.' if different else 'Buddy keeps using this for the current task. Changes apply to your next message.'
+            from .model_ui import model_summary
+            different=(active.id,active.model,active.reasoning)!=(selected.id,selected.model,selected.reasoning)
+            text=f'Current task: {model_summary(active)}.\nYour next message uses {model_summary(selected)}.' if different else 'Buddy keeps using this for the current task. Changes apply to your next message.'
         else:text=''
         self.model_hint.set_text(text)
+        self.model_hint.set_visible(bool(text))
 
     def select_model(self,config):
         self.store.save_config(config)

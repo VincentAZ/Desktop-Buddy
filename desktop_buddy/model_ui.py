@@ -4,7 +4,7 @@ import re
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, GLib
-from .state import PROVIDERS, ProviderConfig, thinking_levels, thinking_choices, thinking_label
+from .state import PROVIDERS, ProviderConfig, thinking_levels, thinking_label
 from .providers import Provider
 from .comfyui import ComfyUI
 from .ui_widgets import label, button, scroller
@@ -81,21 +81,26 @@ def thinking_value(dropdown):
     return dropdown.values[selected] if selected < len(dropdown.values) else ''
 
 
+def model_summary(config):
+    return f'{PROVIDERS[config.id][0]} · {config.model} · {thinking_label(config.id, config.reasoning)} thinking'
+
+
 class ModelMenu:
-    """One button in the toolbar. One click opens it; one more click changes the
-    model or the thinking level. Nothing to confirm."""
+    """Toolbar model and thinking controls. Choices apply without confirmation."""
 
     def __init__(self, app):
         self.app = app
         self.filling = False
         self.button = Gtk.MenuButton()
         self.button.add_css_class('model-menu')
-        self.button.set_tooltip_text('Choose a saved assistant or adjust how much time it takes to answer')
-        self.button.update_property([Gtk.AccessibleProperty.LABEL], ['Choose your assistant'])
         face = Gtk.Box(spacing=8)
-        self.title = label('', ellipsize=3)
+        words = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.title = label('', 'model-title', ellipsize=3)
         self.title.set_max_width_chars(34)
-        face.append(self.title)
+        self.detail = label('', 'model-detail', ellipsize=3)
+        self.detail.set_max_width_chars(36)
+        words.append(self.title);words.append(self.detail)
+        face.append(words)
         face.append(Gtk.Image.new_from_icon_name('pan-down-symbolic'))
         self.button.set_child(face)
         self.popover = Gtk.Popover()
@@ -117,23 +122,42 @@ class ModelMenu:
             if config.model:profiles[config.id + ':' + config.model] = config.__dict__
         return [ProviderConfig(**values) for values in sorted(profiles.values(), key=lambda v: (v['id'], v['model']))]
 
+    def refresh_title(self):
+        selected = self.current()
+        active = getattr(self.app, 'active_model', None)
+        shown = active or selected
+        self.title.set_text(shown.model or 'Choose an assistant')
+        self.detail.set_text(f'{PROVIDERS[shown.id][0]} · {thinking_label(shown.id, shown.reasoning)} thinking' if shown.model else 'Set up provider and model')
+        summary = model_summary(shown) if shown.model else 'Assistant setup incomplete'
+        hint = ('Current task: ' if active else '') + summary
+        if active and (active.id, active.model, active.reasoning) != (selected.id, selected.model, selected.reasoning):
+            hint += '\nNext message: ' + model_summary(selected)
+        hint += '\nChange provider, model, or thinking level'
+        self.button.set_tooltip_text(hint)
+        self.button.update_property([Gtk.AccessibleProperty.LABEL], [hint])
+
     def refresh(self, *_):
         """Rebuild from saved settings so the menu always shows what is really selected."""
         configs = self.app.store.configs()
         current = self.current(configs)
-        if current.model:
-            self.title.set_text(f'{current.model} · {thinking_label(current.id, current.reasoning)} thinking')
-        else:self.title.set_text('Assistant setup incomplete')
-        if hasattr(self.app,'assistant_status'):
-            self.app.assistant_status.set_text('Assistant · '+PROVIDERS[current.id][0] if current.model else 'Waiting for IT setup')
+        self.refresh_title()
         self.filling = True
         try:
-            answering_expanded=getattr(self,'answering',None) is not None and self.answering.get_expanded()
             while self.box.get_first_child():self.box.remove(self.box.get_first_child())
             running = bool(self.app.worker and self.app.worker.is_alive())
             self.app.model_hint = label('', 'status', wrap=True)
             self.app.update_model_hint()
-            self.box.append(label('YOUR ASSISTANT', 'eyebrow'))
+            self.box.append(self.app.model_hint)
+            if current.model:
+                self.box.append(label('THINKING LEVEL', 'eyebrow'))
+                self.thinking = Gtk.DropDown()
+                self.thinking.update_property([Gtk.AccessibleProperty.LABEL], ['Thinking level'])
+                set_thinking_choices(self.thinking, current.id, current.reasoning, current.model)
+                self.thinking.connect('notify::selected', lambda widget,*_: self.pick_thinking(thinking_value(widget)) if not self.filling else None)
+                self.box.append(self.thinking)
+                self.box.append(label('For '+current.model+'. Default lets the service decide.', 'muted', wrap=True))
+                self.box.append(Gtk.Separator())
+            self.box.append(label('PROVIDER AND MODEL', 'eyebrow'))
             profiles = self.profiles(configs)
             if not profiles:
                 self.box.append(label('No assistant has been configured. IT can add one below by choosing a vendor and model.', 'muted', wrap=True))
@@ -145,16 +169,6 @@ class ModelMenu:
                                   lambda c=config: self.pick_model(c))
                 group = group or row
                 self.box.append(row)
-            if current.model:
-                self.answering=Gtk.Expander(label='Answering preferences · '+thinking_label(current.id,current.reasoning))
-                levels=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=6)
-                levels.append(label('You can leave this as it is. More thinking can help with difficult requests and take longer.', 'muted',wrap=True))
-                group = None
-                for title, wire, hint in thinking_choices(current.id, current.model):
-                    row = self.choice(title, hint, wire == current.reasoning, group, lambda w=wire: self.pick_thinking(w))
-                    group = group or row
-                    levels.append(row)
-                self.answering.set_child(levels);self.answering.set_expanded(answering_expanded);self.box.append(self.answering)
             self.note = label('', 'status', wrap=True)
             offline = getattr(self.app, 'local', None)
             blocked = current.model and offline is not None and offline.get_active() and not current.local
@@ -162,13 +176,11 @@ class ModelMenu:
             elif running:self.note.set_text('A task is running. Your choice applies to the next message.')
             self.note.set_visible(bool(self.note.get_text()))
             self.box.append(self.note)
-            self.box.append(self.app.model_hint)
-            self.app.model_hint.set_visible(running)
             self.box.append(Gtk.Separator())
+            self.box.append(button('Add or set up a model…', lambda *_: (self.popover.popdown(), self.app.providers_dialog())))
             self.advanced=Gtk.Expander(label='Advanced · assistant setup')
             advanced=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=8)
             advanced.append(label('For someone managing this installation. You do not need to configure an AI service for everyday work.', 'muted',wrap=True))
-            advanced.append(button('Add or set up a model…', lambda *_: (self.popover.popdown(), self.app.providers_dialog())))
             if current.model:
                 advanced.append(button('Advanced settings for this model…', lambda *_: (self.popover.popdown(), self.app.providers_dialog(current))))
             self.advanced.set_child(advanced);self.box.append(self.advanced)

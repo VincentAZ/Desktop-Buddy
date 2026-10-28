@@ -13,91 +13,6 @@ gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import GdkPixbuf, GLib, GObject, Gdk, Graphene, Gtk, Pango
 
 
-CSS = '''
-window { background: #f8f7f3; color: #263b35; }
-headerbar { background: #f8f7f3; box-shadow: none; border-bottom: 1px solid #e2e5dd; }
-button { background-image: none; box-shadow: none; border: 0; border-radius: 10px;
-         padding: 10px 14px; background-color: #eaece5; color: #263b35; }
-button:hover { background-color: #dde4d9; }
-button.flat { background: transparent; }
-button.flat:hover { background: #eaece5; }
-button.suggested-action { background: #315c49; color: #ffffff; font-weight: 600; }
-button.suggested-action:hover { background: #234735; }
-button.destructive-action { background: #a03f35; color: #ffffff; }
-button:disabled { opacity: .45; }
-.sidebar { background: #eeefe8; border-right: 1px solid #dfe3d8; padding: 20px 14px; }
-.brand { font-size: 20px; font-weight: 700; letter-spacing: -.4px; }
-.muted { color: #65736b; }
-.eyebrow { color: #65736b; font-size: 11px; font-weight: 600; letter-spacing: 1.2px; }
-.conversation-title { font-size: 15px; font-weight: 600; }
-.sidebar list { background: transparent; }
-.sidebar row { border-radius: 10px; padding: 12px 10px; margin: 3px 0; }
-.sidebar row:selected { background: #dce5d6; color: #263b35; }
-.sidebar row:hover { background: #e3e8dd; }
-entry, searchentry, dropdown > button { background: #ffffff; border: 1px solid #d8ded3; border-radius: 9px; }
-entry, searchentry { padding: 6px 8px; }
-.toolbar { padding: 16px 24px; }
-.conversation { padding: 20px 0; }
-.message { padding: 12px 0; }
-.message-body { font-size: 16px; line-height: 1.4; }
-.user-message { background: #e9eee4; border-radius: 18px; padding: 18px 22px; margin-left: 48px; }
-.message-author { font-size: 12px; font-weight: 700; color: #42604b; }
-button.copy-message { min-height: 22px; min-width: 22px; padding: 2px; opacity: .55; }
-button.copy-message:hover { opacity: 1; }
-.tool-card { border: 1px solid #dce2d6; border-radius: 12px; padding: 12px 16px; background: #f1f3ed; }
-.tool-card label { font-size: 13px; }
-.error-card { border-color: #d8afa0; background: #fff1e9; color: #6c392d; }
-.composer { background: #ffffff; border: 1px solid #bdccbb; border-radius: 20px; padding: 4px 12px 12px; box-shadow: 0 4px 18px alpha(#263b35, .05); }
-.resize-handle { min-height: 14px; }
-.resize-grip { background: #d3dacf; border-radius: 999px; min-width: 44px; min-height: 4px; }
-.resize-handle:hover .resize-grip { background: #8fa392; }
-textview, textview text { background: transparent; color: #263b35; }
-textview { padding: 4px; }
-.composer textview { font-size: 16px; }
-.composer dropdown > button { border: 0; background: #eef2e9; padding: 6px 10px; }
-.attachment { background: #eaece5; border-radius: 8px; padding: 5px; }
-.welcome-title { font-size: 36px; font-weight: 600; letter-spacing: -1px; }
-.welcome { padding: 16px 6px; }
-.compact .welcome { padding: 4px 6px; }
-.compact .welcome-mark { padding: 8px; }
-.compact .welcome-title { font-size: 28px; }
-.welcome-subtitle { font-size: 16px; color: #65736b; }
-.welcome-mark { background: #e1e9d9; color: #315c49; border-radius: 20px; padding: 18px; }
-.suggestion { background: #ffffff; border: 1px solid #dce2d6; padding: 16px; }
-.suggestion:hover { background: #eef2e9; }
-button.jump-to-end { background: #ffffff; color: #263b35; border: 1px solid #c9d2c6; border-radius: 999px; padding: 10px; min-width: 20px; min-height: 20px; box-shadow: 0 3px 12px alpha(#263b35, .18); }
-button.jump-to-end:hover { background: #eef2e9; }
-.status { color: #65736b; font-size: 12px; }
-.status.attention { color: #9c4139; font-size: 13px; font-weight: 700; }
-.stop-button { color: #9c4139; }
-.settings-section { background: #ffffff; border: 1px solid #dce2d6; border-radius: 12px; padding: 16px; }
-.step-title { font-size: 16px; font-weight: 600; }
-.model-choice { padding: 6px; border-radius: 10px; background: #ffffff; }
-.model-choice row { border-radius: 8px; }
-.model-choice row:selected { background: #dce8d7; color: #263b35; }
-.model-choice row:hover { background: #eef2e9; }
-popover contents { background: #f8f7f3; padding: 12px; border: 1px solid #d8ded3; }
-menubutton.model-menu > button { background: #ffffff; border: 1px solid #d8ded3; padding: 8px 12px; }
-menubutton.model-menu > button:hover { background: #eef2e9; }
-checkbutton.menu-choice { padding: 6px 4px; border-radius: 8px; }
-checkbutton.menu-choice:hover { background: #eef2e9; }
-checkbutton.menu-choice:checked { background: #e1e9d9; }
-/* GTK's end-of-list glow drew a line between the conversation and the footer
-   that read as a divider belonging to the last message. The jump button already
-   shows when there is more to read, so drop the glow everywhere. */
-scrolledwindow > overshoot, scrolledwindow > undershoot { background: none; box-shadow: none; border: none; }
-button.screen-preview { background: #ffffff; border: 1px solid #dce2d6; border-radius: 12px; padding: 6px 14px 6px 6px; }
-button.screen-preview:hover { background: #eef2e9; border-color: #bdccbb; }
-.screen-preview picture { border-radius: 7px; }
-.preview-title { font-size: 14px; font-weight: 600; }
-.lightbox { background: alpha(#101814, .95); padding: 18px 24px 24px; }
-.lightbox-caption { color: #ffffff; font-size: 15px; font-weight: 600; }
-.lightbox-hint { color: alpha(#ffffff, .7); font-size: 13px; }
-button.lightbox-close { background: alpha(#ffffff, .14); color: #ffffff; }
-button.lightbox-close:hover { background: alpha(#ffffff, .26); }
-'''
-
-
 MODE_TITLES = ['Discuss only', 'Ask before acting', 'Just do it']
 PREVIEW_TITLE = 'Buddy’s latest look at your screen'
 PREVIEW_SIZE = (160, 90)
@@ -230,7 +145,7 @@ def scroller(child, expand=True, minimum=0):
 
 
 def build_workspace(app, providers, text_view, default_workspace):
-    """Task-first native shell. Technical controls live in one options popover."""
+    """Native shell with model and appearance controls beside the conversation."""
     header = Gtk.HeaderBar()
     title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER)
     title.append(label('Desktop Buddy', 'conversation-title'))
@@ -290,10 +205,26 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.selector.connect('notify::selected', app.provider_changed)
     from .model_ui import ModelMenu
     app.model_menu = ModelMenu(app)
-    app.assistant_status=label('', 'muted',ellipsize=Pango.EllipsizeMode.END)
-    app.assistant_status.set_max_width_chars(24)
-    app.assistant_status.set_tooltip_text('Your assistant is set up by IT. Open Settings for details.')
-    toolbar.append(app.assistant_status)
+    toolbar.append(app.model_menu.button)
+    from .themes import THEMES
+    app.theme_menu=Gtk.MenuButton(icon_name='applications-graphics-symbolic')
+    app.theme_menu.set_tooltip_text('Choose a theme')
+    app.theme_menu.update_property([Gtk.AccessibleProperty.LABEL],['Choose a theme'])
+    app.theme_menu.add_css_class('flat')
+    theme_popover=Gtk.Popover()
+    theme_box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=6)
+    theme_box.append(label('THEME','eyebrow'))
+    app.theme_choices={};theme_group=None
+    for key,(name,_palette) in THEMES.items():
+        choice=Gtk.CheckButton(label=name)
+        choice.add_css_class('menu-choice')
+        if theme_group:choice.set_group(theme_group)
+        else:theme_group=choice
+        choice.set_active(key==app.theme)
+        choice.connect('toggled',lambda row,k=key:app.apply_theme(k) if row.get_active() and app.theme!=k else None)
+        app.theme_choices[key]=choice;theme_box.append(choice)
+    theme_popover.set_child(theme_box);app.theme_menu.set_popover(theme_popover)
+    toolbar.append(app.theme_menu)
     toolbar.append(icon_button('emblem-system-symbolic','Settings',lambda *_:app.settings_dialog()))
     toolbar.append(menu_button('view-more-symbolic', 'Conversation options', [
         ('Rename conversation', app.rename_conversation_dialog),

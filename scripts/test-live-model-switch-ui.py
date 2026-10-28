@@ -68,16 +68,16 @@ def scoped_registry(*args,**kwargs):
 phase=0;started=time.monotonic();cid=None;code='BUD-'+root.name.removeprefix('run-')
 
 def choose(pid):
-    dialog=app.model_dialog();picker=app.model_menu;row=picker.box.get_first_child()
+    picker=app.model_menu;picker.button.popup();row=picker.box.get_first_child()
     while row:
         if isinstance(row,Gtk.CheckButton):
             title=row.get_child().get_first_child();hint=title.get_next_sibling()
             if title.get_text()==configs[pid].model and hint.get_text().startswith(PROVIDERS[pid][0]+' ·'):
-                row.set_active(True);picker.popover.popdown();dialog.controller.close()
+                row.set_active(True);picker.popover.popdown()
                 assert app.selected_id()==pid
                 return
         row=row.get_next_sibling()
-    raise AssertionError('Saved assistant was missing from the IT selector')
+    raise AssertionError('Saved assistant was missing from the toolbar selector')
 
 def send(text):
     app.input.get_buffer().set_text(text);app.run_button.emit('clicked')

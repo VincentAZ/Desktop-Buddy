@@ -10,7 +10,8 @@ import gi
 gi.require_version('Gtk','4.0');gi.require_version('Gdk','4.0');gi.require_version('Graphene','1.0');gi.require_version('GdkPixbuf','2.0')
 from gi.repository import Gdk,GdkPixbuf,Gtk,GLib,Graphene
 from desktop_buddy.ui import BuddyApp
-from desktop_buddy.ui_widgets import CSS,INPUT_HEIGHT
+from desktop_buddy.ui_widgets import INPUT_HEIGHT
+from desktop_buddy.themes import STYLES as CSS
 
 root=Path(__file__).resolve().parents[1]/'.test-data'/'screenshot-ui'
 root.mkdir(parents=True,exist_ok=True)
@@ -31,10 +32,11 @@ def capture(name):
     app.window.get_renderer().render_texture(snapshot.to_node(),rect).save_to_png(str(root/name))
 
 def tick():
-    global phase,grown
+    global phase,grown,initial_height
     try:
         if time.monotonic()-started>20:raise TimeoutError(f'phase {phase}')
         if phase==0:
+            initial_height=app.window.get_height()  # Window decorations differ on X11 and Wayland.
             for i in range(5):
                 app.store.add_message(app.cid,{'role':'user','content':'Open Resolve please'})
                 app.store.add_message(app.cid,{'role':'assistant','content':'I opened DaVinci Resolve. Some steps could not be confirmed. Choose Continue task to check what happened before retrying.'})
@@ -66,13 +68,13 @@ def tick():
             app.input_height=320;app.apply_input_height()
         elif phase==5:
             capture('tall-input.png')
-            assert app.window.get_height()==860,app.window.get_height()
+            assert app.window.get_height()==initial_height,app.window.get_height()
             assert app.input_scroll.get_height()>=200,app.input_scroll.get_height()
             assert app.transcript_scroll.get_height()>=140,app.transcript_scroll.get_height()
             result['message_box_drags_taller']=app.input_scroll.get_height()
             app.input_height=5000;app.apply_input_height()
         elif phase==6:
-            assert app.window.get_height()==860,app.window.get_height()
+            assert app.window.get_height()==initial_height,app.window.get_height()
             assert app.transcript_scroll.get_height()>=140,app.transcript_scroll.get_height()
             result['huge_drag_never_grows_window_or_hides_conversation']=[app.input_scroll.get_height(),app.transcript_scroll.get_height()]
             app.input_height=INPUT_HEIGHT;app.apply_input_height()

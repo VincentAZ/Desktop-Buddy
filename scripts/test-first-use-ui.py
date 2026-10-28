@@ -38,7 +38,7 @@ def tick():
             assert 'Choose an assistant' in text(app.window)
             assert not app.run_button.get_sensitive()
             assert 'Ready when you are' not in text(app.window)
-            assert not app.model_menu.button.get_mapped()
+            assert app.model_menu.button.get_mapped()
             app.input.get_buffer().set_text('Help with my quarterly report')
             click(app.window,'Set up the assistant');settings=app.preferences_window.controller;phase=1
         elif phase==1 and capture(settings.window,'setup-status.png'):
@@ -70,10 +70,10 @@ def tick():
             assert not app.store.messages(app.cid)
             settings.close();phase=5
         elif phase==5 and capture(app.window,'after-it-setup.png'):
-            assert 'it-fixture-assistant' not in text(app.window)
-            assert 'Assistant · Ollama' in text(app.window)
+            assert 'it-fixture-assistant' in text(app.window)
+            assert 'Ollama · Default thinking' in text(app.window)
             assert 'Ready when you are' in text(app.window)
-            assert not app.model_menu.button.get_mapped()
+            assert app.model_menu.button.get_mapped()
             result.update(offline_help_available_before_model_setup=True,
                           jane_sees_it_setup_needed=True,send_waits_for_assistant_configuration=True,
                           it_can_choose_vendor_and_model_in_app=True,draft_preserved_without_sending=True,

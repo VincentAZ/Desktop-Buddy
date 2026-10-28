@@ -42,7 +42,7 @@ cd Desktop-Buddy
 ./launch.sh
 ```
 
-The IT manager opens **Settings → IT setup → Add or configure a vendor…** to connect an existing LM Studio/Ollama service or a cloud provider. Cloud API keys are saved in GNOME Keyring. Select or enter a model, configure its capabilities, and run the connection/tool test. Switch saved models from the assistant selector on the IT setup page without restarting. Jane’s main screen shows the configured vendor and hides technical model controls. A fresh installation asks IT to finish setup before Send becomes available. Changes during a task apply to the next task. This is a personal-workstation development build, not a hosted service.
+The IT manager opens **Settings → IT setup → Add or configure a vendor…** to connect an existing LM Studio/Ollama service or a cloud provider. Cloud API keys are saved in GNOME Keyring. Select or enter a model, configure its capabilities, and run the connection/tool test. The upper-right model button shows the provider, exact model, and thinking level. Open it to switch saved models across providers or change thinking immediately. During a task, the button shows the model actually running and the menu explains which choice will apply to the next message. Choose **Sage**, **Paper**, or **Midnight** from the toolbar’s theme menu or **Settings → Appearance**; the theme applies to every Buddy window and is remembered after restart. A fresh installation asks IT to finish setup before Send becomes available. Changes during a task apply to the next task. This is a personal-workstation development build, not a hosted service.
 
 Want an app-menu launcher and an isolated environment?
 
