@@ -28,6 +28,7 @@ Desktop Buddy is built for people who want results, not an agent control panel. 
 - **Real Linux control.** Work with files and commands, launch apps, drive an isolated Chrome window (visible or in the background), use accessible controls when an app has them, and click or type from a screenshot when it does not, through GNOME's screen and input portal.
 - **Connected apps in one click.** Pick an app, sign in in your browser, done. Sign-in is saved in GNOME Keyring and reused. Any server address can be pasted too.
 - **Local by default.** Conversations, tasks, preferences, memory, and audit records live in SQLite on your machine. API keys stay in GNOME Keyring.
+- **Concurrent conversations.** Start a new conversation while others keep working. Each has its own replies, drafts, task, browser profile and Stop button. Background requests for approval are marked in history.
 - **A stop button that means it.** Stop the current task or use **Stop everything** to cancel work, disconnect desktop control, and close Buddy's browser.
 
 ## Run the development build
@@ -50,6 +51,12 @@ python3 scripts/install.py
 ```
 
 The installer builds from this checkout without downloading packages, creates a private environment under `~/.local/share/desktop-buddy`, and adds a GNOME launcher. It does not install a background service or edit shell profiles. See [installation](docs/INSTALLATION.md) for system packages and troubleshooting.
+
+## Run concurrent sessions
+
+Start a task, then choose **New conversation** (Ctrl+N) and send another request. Switch between conversations in the sidebar while they keep running. **Stop** cancels only the conversation you are viewing; **Stop everything** cancels every task. Replies, attachments, follow-ups, approvals and progress stay with their conversation.
+
+Each conversation gets a separate browser profile. For parallel browsing, turn off **Settings → Show the browser window while Buddy browses**. Tasks using the shared screen, mouse, keyboard or a visible browser take turns until the task using them finishes; waiting tasks can still be stopped. Files and external app accounts remain shared, so use separate work folders or filenames for unrelated tasks. Your model service may impose its own concurrency limits.
 
 ## Connect your apps
 
@@ -109,7 +116,7 @@ Read [security and privacy](docs/SECURITY.md) for the exact trust boundaries.
 ```mermaid
 flowchart LR
     You[You] --> UI[Native GTK conversation]
-    UI --> Agent[Sequential agent loop]
+    UI --> Agent[One agent loop per active conversation]
     Agent --> Models[Cloud or local model]
     Agent --> Tools[Files · shell · browser · apps]
     Tools --> Linux[GNOME portals + AT-SPI]

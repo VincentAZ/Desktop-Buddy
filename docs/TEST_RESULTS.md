@@ -1,5 +1,11 @@
 # Current acceptance evidence
 
+
+October 28 concurrent-session change: **334 unit/protocol tests passed**, including six new session tests for cancellable desktop ownership, independent MCP transports (including cancellation during a real call), and two simultaneous headless Chromium profiles with isolated cookies. Log: `.test-data/concurrent-sessions-unit.log`.
+
+Native GTK checks passed under Xvfb: `test-concurrent-ui.py`, `test-conversation-ui.py`, `test-yolo-ui.py`, `test-file-ui.py`, and `test-command-review-ui.py`. The concurrency fixture uses a real local HTTP provider transport and proves overlapping requests, switching during work, draft/follow-up routing, scoped Stop, background completion, independent approvals, stale-event rejection, duplicate-answer prevention and Stop everything. These are deterministic fixtures; they do not establish a particular cloud/local model service's concurrency capacity or add physical GNOME acceptance.
+
+
 For the latest source fingerprints and scoped regression reports, see [DELIVERY.md](DELIVERY.md). Historical UI counts below do not replace current release acceptance. A real keyless local provider and a real cloud provider now pass synthetic tool round trips; the live local model also passes a browser → file → GTK-field workflow. Full physical screenshot/mouse operation and live Google account access remain incomplete.
 
 Current combined regression: `.test-data/verification/run-beutqr53/report.json` passes 283 unit/protocol tests and all 16 native UI/workflow scenarios plus display preflight, with unchanged source. These fixtures use a private X display, so physical GNOME screen/mouse acceptance remains separate. Real synthetic GNOME Keyring write, separate-process read and verified deletion also pass in `live-keyring/run-wcfh162d/result.json`; no existing account credentials were changed.

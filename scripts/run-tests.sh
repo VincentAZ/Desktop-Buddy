@@ -5,6 +5,7 @@ buddy_python=/usr/bin/python3
 if [[ -x .venv/bin/python ]]; then buddy_python=.venv/bin/python; fi
 "$buddy_python" -m unittest discover -s tests -v
 if [[ "${1:-}" == "--desktop" ]]; then
+  "$buddy_python" scripts/test-concurrent-ui.py
   "$buddy_python" scripts/test-computer-access-ui.py
   "$buddy_python" scripts/test-command-review-ui.py
   "$buddy_python" scripts/test-file-ui.py

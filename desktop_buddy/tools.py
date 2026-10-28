@@ -307,6 +307,10 @@ class Registry:
     def execute(self,name,args,token,tid=''):
         if name not in self.tools:raise ValueError('Unknown tool; use discover_tools to find exact tool names.')
         tool=self.tools[name];validate(args,tool.parameters)
+        lease=getattr(self,'desktop_lease',None)
+        if lease and (name.startswith('desktop.') or name=='app.launch' or
+                      name.startswith('browser.') and self.browser and not self.browser.headless):
+            lease.acquire(token,self.progress)
         # JSON copy detaches the exact authorized arguments from mutable caller objects.
         args=json.loads(json.dumps(args))
         target=None;raw=False

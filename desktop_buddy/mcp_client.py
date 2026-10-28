@@ -271,12 +271,20 @@ class Connection:
 
 
 class MCPManager:
-    def __init__(self, store, credentials):
-        self.store=store;self.credentials=credentials;self.connections={};self.lock=threading.RLock()
+    def __init__(self, store, credentials, parent=None):
+        import weakref
+        self.store=store;self.credentials=credentials;self.connections={}
+        self.lock=parent.lock if parent else threading.RLock()
+        self.peers=parent.peers if parent else weakref.WeakSet()
+        with self.lock:self.peers.add(self)
         from .mcp_registration import MCPRegistrations
         self.registrations=MCPRegistrations(self)
         # SDK failures reach our redacted UI/audit boundary instead of raw stderr.
         logger=logging.getLogger('mcp');logger.addHandler(logging.NullHandler());logger.propagate=False
+
+    def fork(self):
+        """Each task owns its transport; settings and explicit disconnects are shared."""
+        return MCPManager(self.store,self.credentials,parent=self)
 
     def configs(self):
         return {key:MCPConfig(**value).validate() for key,value in self.store.get('mcp_servers',{}).items()}
@@ -332,6 +340,10 @@ class MCPManager:
             bindings.pop(ident,None);self.store.set('mcp_managed_connections',bindings)
 
     def disconnect(self, ident):
+        with self.lock:
+            for manager in list(self.peers):manager._disconnect_local(ident)
+
+    def _disconnect_local(self, ident):
         with self.lock:connection=self.connections.pop(ident,None)
         if connection:connection.close()
 
@@ -346,6 +358,10 @@ class MCPManager:
             connections=list(self.connections.values());self.connections.clear()
         for connection in connections:connection.close()
 
+    def close_all(self):
+        with self.lock:
+            for manager in list(self.peers):manager.close()
+
     def servers(self):
         with self.lock:
             return [{'id':c.id,'name':c.name,'transport':c.transport,'enabled':c.enabled,
@@ -359,8 +375,10 @@ class MCPManager:
             if not config or not config.enabled:raise MCPError('Open Connect apps and reconnect this saved connection first.')
             config=self.registrations.prepare(config)
             connection=self.connections.get(ident)
-            if interactive or connection and connection.stopped.is_set():
+            if interactive:
                 self.disconnect(ident);connection=None
+            elif connection and connection.stopped.is_set():
+                self._disconnect_local(ident);connection=None
             if connection is None:
                 connection=Connection(config,self.credentials,interactive);self.connections[ident]=connection
             return connection

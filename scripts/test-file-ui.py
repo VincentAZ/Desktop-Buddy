@@ -80,7 +80,7 @@ def tick():
             review_thread=threading.Thread(target=lambda:decision.append(app.approve('mcp.call',detail,StopToken())))
             review_thread.start();phase=4
         elif phase==4:
-            dialog=next((w for w in app.get_windows() if w.get_title()=='Review action'),None)
+            dialog=next((w for w in app.get_windows() if (w.get_title() or '').startswith('Review action')),None)
             if dialog and capture(dialog,'review.png'):
                 text=visible_text(dialog)
                 for term in ('Sales account','Opportunity-0042','1250.75','USD','jane@example.com'):assert term in text

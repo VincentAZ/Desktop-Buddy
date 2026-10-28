@@ -25,14 +25,14 @@ class PreferencesDialog:
         self.offline.connect('toggled',lambda w:app.local.set_active(w.get_active()))
         self.handlers.append((app.local,app.local.connect('toggled',lambda w:self.offline.set_active(w.get_active()))))
         privacy.append(self.offline)
-        privacy.append(label('Buddy can use files and look at your screen with an assistant already set up on this computer. Connected apps, online requests, opening apps, typing and clicking are turned off. Changing this setting while Buddy is working stops the current task.','muted',wrap=True))
+        privacy.append(label('Buddy can use files and look at your screen with an assistant already set up on this computer. Connected apps, online requests, opening apps, typing and clicking are turned off. Changing this setting while Buddy is working stops all tasks.','muted',wrap=True))
         body.append(privacy)
         browsing=section('Browsing the web')
         self.browser_visible=Gtk.CheckButton(label='Show the browser window while Buddy browses')
         self.browser_visible.set_active(app.store.get('browser_visible',True))
         self.browser_visible.connect('toggled',self.browser_visibility_changed)
         browsing.append(self.browser_visible)
-        browsing.append(label('Buddy uses its own browser window, separate from yours. Turn this off to let Buddy browse in the background.','muted',wrap=True))
+        browsing.append(label('Buddy uses its own browser window, separate from yours. Turn this off to let conversations browse in parallel in the background. Visible browser tasks take turns using the computer.','muted',wrap=True))
         body.append(browsing)
         folder=section('Where Buddy saves your work')
         self.folder=label('',wrap=True);self.refresh_folder();folder.append(self.folder)
@@ -67,9 +67,9 @@ class PreferencesDialog:
     def browser_visibility_changed(self,widget):
         visible=widget.get_active()
         self.app.store.set('browser_visible',visible)
-        self.app.browser.headless=not visible
+        for session in self.app.sessions.values():session.browser.headless=not visible
         # The next page Buddy opens uses the new setting; close the current window so it applies.
-        self.app.browser.close()
+        for session in self.app.sessions.values():session.browser.close()
 
     def client_keys(self,group=None):
         from .mcp_ui import ClientKeysDialog

@@ -14,6 +14,14 @@ TOPICS = {
         'Settings → IT setup → Add or configure a vendor…, pick a service (OpenAI, Anthropic, xAI, Moonshot, OpenRouter, '
         'or LM Studio / Ollama on this computer), enter its key if the service needs one, pick a model and press Use model. '
         'Whoever set up the computer usually does this once; it can be changed at any time.'),
+    'sessions': ('Run concurrent conversations',
+        'Choose New conversation (Ctrl+N) while a task is working, then send another request. '
+        'Switch conversations in the sidebar to read replies, send follow-ups or review approvals. '
+        'Drafts and attachments stay with their conversation. Stop cancels only the selected conversation; '
+        'Stop everything cancels all tasks. Each conversation has its own browser profile. '
+        'Hide the browser window in Settings for parallel browsing. Tasks using the shared screen, mouse, '
+        'keyboard or a visible browser take turns until the task using them finishes. '
+        'Files and connected app accounts are shared; choose separate folders or filenames for unrelated work.'),
     'models': ('Change the assistant',
         'Open Settings → IT setup. Choose a saved assistant from the model menu, or Add or configure a vendor… '
         'to connect another service. A running task keeps the assistant it started with; the new choice applies '
@@ -48,7 +56,7 @@ TOPICS = {
         'connected apps or sending anything online. Just do it: Buddy acts without asking; you confirm this once, and Stop '
         'always works. Settings → Keep Buddy offline blocks online requests and controlling other apps; it needs a local model.'),
     'stop': ('Stop or recover a task',
-        'Use Stop to cancel the current task. Stop everything also disconnects computer control and closes Buddy’s browser '
+        'Use Stop to cancel the selected conversation’s task. Stop everything cancels every task, disconnects computer control and closes all Buddy browsers '
         '(Ctrl+Shift+Escape while Buddy is focused). Changes already made stay. “Buddy couldn’t read something it needed” means a '
         'step that read information (an email search, a web page, a file) did not work; Buddy’s reply keeps a note about it '
         'and Continue task tries that read again. After a restart Buddy keeps the conversation and '

@@ -22,6 +22,7 @@ from .state import Store,Credentials,PROVIDERS,thinking_levels
 from .tools import Registry
 from .mcp_client import MCPManager
 from .paths import default_data_dir, default_workspace
+from .sessions import Session, DesktopLease, session_property
 
 from .ui_widgets import CSS, build_workspace, welcome, message_card, activity_card, image_card
 def text_view(editable=False):
@@ -44,6 +45,31 @@ def content(view):
 SETUP_NEEDED='Choose an assistant in Settings to get started'
 
 class BuddyApp(Gtk.Application):
+    agent = session_property('agent')
+    worker = session_property('worker')
+    start_token = session_property('start_token')
+    browser = session_property('browser')
+    active_model = session_property('active_model')
+    pending_images = session_property('pending_images')
+    pending_files = session_property('pending_files')
+    stop_source = session_property('stop_source')
+    saved_followup = session_property('saved_followup')
+    last_reply = session_property('last_reply')
+
+    @property
+    def current_session(self):
+        if self.cid not in self.sessions:
+            browser=Browser(self.data_dir/'browser-profiles'/(self.cid or 'setup'),
+                            headless=not self.store.get('browser_visible',True))
+            self.sessions[self.cid]=Session(self.cid,browser)
+        return self.sessions[self.cid]
+
+    def any_running(self):
+        return any(session.running for session in self.sessions.values())
+
+    def task_for_token(self,token):
+        return next((session for session in self.sessions.values() if session.start_token is token),None)
+
     def __init__(self,data_dir,smoke_test=False):
         resolved = Path(data_dir).resolve()
         app_id = 'io.desktopbuddy.App'
@@ -57,8 +83,9 @@ class BuddyApp(Gtk.Application):
         if self.get_is_remote():return
         self.redactor=Redactor();self.store=Store(self.data_dir,self.redactor);self.credentials=Credentials(self.redactor)
         self.mcp=MCPManager(self.store,self.credentials)
-        self.agent=None;self.start_token=StopToken();self.worker=None;self.pending=[];self.desktop=None;self.a11y=None;self.aux_tokens=[]
-        self.browser=Browser(self.data_dir/'browser-profile',headless=not self.store.get('browser_visible',True));self.cid=None;self.emergency_latched=False;self.window_handle='';self.task_usage={};self.pending_images=[];self.pending_files=[]
+        self.cid=None;self.sessions={};self.desktop_lease=DesktopLease()
+        self.pending=[];self.desktop=None;self.a11y=None;self.aux_tokens=[]
+        self.emergency_latched=False;self.window_handle='';self.task_usage={}
         self.connect('activate',self.activate)
         stop=Gio.SimpleAction.new('emergency',None);stop.connect('activate',lambda *_:self.emergency('the Ctrl+Shift+Escape shortcut'));self.add_action(stop)
         new=Gio.SimpleAction.new('new-conversation',None);new.connect('activate',lambda *_:self.new_conversation());self.add_action(new)
@@ -93,7 +120,7 @@ class BuddyApp(Gtk.Application):
         default = default_workspace(self.data_dir)
         default.mkdir(parents=True,exist_ok=True)
         build_workspace(self, PROVIDERS, text_view, default)
-        self.refresh_history();self.restore_draft();self.provider_changed()
+        self.refresh_history();self.render_history();self.restore_draft();self.provider_changed()
         self.window.present()
         self.export_window_handle()
         if self.smoke_test:GLib.timeout_add(2000,lambda:self.quit() or False)
@@ -128,7 +155,7 @@ class BuddyApp(Gtk.Application):
     def update_readiness(self,task_finished=False):
         if not hasattr(self,'run_button'):return
         ready=bool(self.store.configs()[self.selected_id()].model)
-        running=not task_finished and bool(self.worker and self.worker.is_alive())
+        running=not task_finished and self.current_session.running
         self.run_button.set_sensitive(ready or running)
         if not ready and not running:
             self.status.set_text(SETUP_NEEDED)
@@ -190,7 +217,7 @@ class BuddyApp(Gtk.Application):
         self.update_disclosure()
         if self.selected_mode()=='yolo' and not getattr(self,'granting_yolo',False) and not self.store.get('yolo_acknowledged',False):
             self.confirm_yolo()
-        if not getattr(self, 'granting_yolo', False) and self.worker and self.worker.is_alive():
+        if not getattr(self, 'granting_yolo', False) and self.current_session.running:
             self.status.set_text('That applies to your next message. The running task keeps going; press Stop if you want it to end.')
 
     def confirm_yolo(self):
@@ -222,10 +249,11 @@ class BuddyApp(Gtk.Application):
 
     def enable_yolo_for_task(self, token):
         token.check()
-        if not self.agent or self.agent.token is not token:
+        session=self.task_for_token(token)
+        if not session or not session.agent:
             raise ValueError('This task is no longer active.')
-        self.agent.registry.policy.mode = 'yolo'
-        self.store.audit(self.agent.task_id, 'approval_mode', {'mode': 'yolo', 'source': 'user_button'})
+        session.agent.registry.policy.mode = 'yolo'
+        self.store.audit(session.agent.task_id, 'approval_mode', {'mode': 'yolo', 'source': 'user_button'})
         self.store.set('yolo_acknowledged',True)
         self.granting_yolo = True
         try:self.mode.set_selected(2)
@@ -233,9 +261,10 @@ class BuddyApp(Gtk.Application):
         self.status.set_text('Just do it is on · Buddy continues without asking. Press Stop to end the task.')
 
     def local_changed(self,*_):
-        if self.worker and self.worker.is_alive():self.emergency('turning Keep Buddy offline on or off')
+        if self.any_running():self.emergency('turning Keep Buddy offline on or off')
         if self.local.get_active():
-            self.browser.close();self.mcp.close()
+            for session in self.sessions.values():session.browser.close()
+            self.mcp.close_all()
             for token in list(self.aux_tokens):token.stop()
         self.save_preferences()
         self.update_disclosure()
@@ -364,9 +393,7 @@ class BuddyApp(Gtk.Application):
         self.refresh_attachments()
 
     def new_conversation(self):
-        if self.worker and self.worker.is_alive():self.notice('Cancel or finish the current task before changing conversations.');return
         self.save_draft()
-        self.clear_attachments(True)
         self.history_search.set_text('')
         self.cid=self.store.conversation();self.refresh_history();self.render_history();self.restore_draft()
 
@@ -408,7 +435,7 @@ class BuddyApp(Gtk.Application):
         return dialog
 
     def delete_conversation_dialog(self):
-        if self.worker and self.worker.is_alive():
+        if self.current_session.running:
             self.notice('Stop the current task before deleting a conversation.')
             return
         cid = self.cid
@@ -419,9 +446,13 @@ class BuddyApp(Gtk.Application):
         row = Gtk.Box(spacing=8, halign=Gtk.Align.END)
         def remove(*_):
             try:
+                session=self.sessions.get(cid)
+                if session and session.running:raise ValueError('Stop this conversation before deleting it.')
                 self.store.delete_conversation(cid)
+                if session:session.browser.close()
                 if self.cid == cid:
                     self.clear_attachments(True);self.cid = None
+                self.sessions.pop(cid,None)
                 self.refresh_history()
                 self.render_history();self.restore_draft()
                 dialog.destroy()
@@ -447,14 +478,20 @@ class BuddyApp(Gtk.Application):
         query = self.history_search.get_text().strip().casefold()
         for item in rows:
             if query and query not in item['title'].casefold():continue
-            row=Gtk.ListBoxRow();row.cid=item['id'];label=Gtk.Label(label=' '.join(item['title'].split()),xalign=0,ellipsize=3,single_line_mode=True);label.set_max_width_chars(24);row.set_tooltip_text(item['title']);row.set_child(label);self.history.append(row)
+            session=self.sessions.get(item['id'])
+            marker=' · Needs you' if session and session.attention else ' · Working' if session and session.running else ''
+            row=Gtk.ListBoxRow();row.cid=item['id']
+            line=Gtk.Box(spacing=4)
+            label=Gtk.Label(label=' '.join(item['title'].split()),xalign=0,ellipsize=3,single_line_mode=True,hexpand=True)
+            label.set_max_width_chars(24);line.append(label)
+            if marker:line.append(Gtk.Label(label=marker))
+            row.set_tooltip_text(item['title']+marker);row.set_child(line);self.history.append(row)
             if row.cid==self.cid:self.history.select_row(row)
 
     def select_history(self,box,row):
-        if not row:return
-        if self.worker and self.worker.is_alive():return
+        if not row or row.cid==self.cid:return
         if row.cid!=self.cid:
-            self.save_draft();self.clear_attachments(True)
+            self.save_draft()
             self.cid=row.cid;self.restore_draft()
         self.render_history()
 
@@ -477,20 +514,36 @@ class BuddyApp(Gtk.Application):
         # Land at the newest message once the cards have been laid out.
         GLib.timeout_add(80,self.scroll_end)
         tasks=self.store.tasks(self.cid)
-        self.task_usage={}
-        if tasks:
-            for record in self.store.audits(tasks[0]['id']):
-                if record['event']=='usage':self.add_usage(json.loads(record['body']))
-        else:self.usage.set_text('')
+        self.refresh_task_usage()
         needs_review = bool(tasks and tasks[0]['status']=='needs_review')
         recoverable = bool(tasks and tasks[0]['status'] in ('interrupted','cancelled','failed','needs_review'))
         self.recovery_button.set_visible(recoverable)
         self.status.set_text('Buddy couldn’t read something it needed · see the note under its reply. Continue task tries again.' if needs_review else
                             'This task stopped before finishing. You can continue when ready.' if recoverable else 'Ready when you are')
-        self.update_readiness()
+        self.restore_session_view()
         if tasks and tasks[0]['status']=='failed':
             errors=[json.loads(r['body']).get('error','') for r in self.store.audits(tasks[0]['id']) if r['event']=='task_error']
             if errors:self.append('ERROR',errors[-1])
+
+
+    def restore_session_view(self):
+        for done,dialog,token in list(self.pending):
+            owner=self.task_for_token(token)
+            if owner:dialog.set_visible(owner.cid==self.cid)
+        session=self.current_session
+        self.refresh_attachments()
+        self.cancel_button.set_visible(session.running)
+        self.workspace.set_sensitive(not session.running)
+        if session.running:
+            self.spinner.start();self.recovery_button.set_visible(False)
+        else:self.spinner.stop()
+        self.stream_view.get_buffer().set_text(self.redactor.stream_text(session.stream)[-8000:])
+        self.stream_scroll.set_visible(session.running and bool(session.stream))
+        self.status.remove_css_class('attention')
+        if session.status:self.status.set_text(session.status)
+        if session.attention:self.status.add_css_class('attention')
+        if session.preview_path:self.on_event('screenshot',session.preview_path)
+        self.update_model_hint();self.update_readiness()
 
 
     def append(self,who,text):
@@ -569,6 +622,39 @@ class BuddyApp(Gtk.Application):
 
     def emit(self,name,data):GLib.idle_add(self.on_event,name,data)
 
+    def session_event(self,cid,generation,name,data):
+        session=self.sessions.get(cid)
+        if session is None or session.generation!=generation:return False
+        if name=='stream':session.stream=str(data)
+        elif name=='screenshot':session.preview_path=str(data)
+        elif name=='message':session.last_reply=data['content'];session.stream=''
+        elif name in ('status','attention'):
+            session.status=self.redactor.text(str(data));session.attention=name=='attention'
+        elif name=='error':
+            from .experience import friendly_error
+            session.status=friendly_error(data)[0];session.attention=True
+        elif name=='done':
+            session.done=data;session.active_model=None;session.stream=''
+            status=data['status']
+            session.attention=status in ('failed','needs_review') or (status=='complete' and needs_user_reply(session.last_reply))
+            session.status={'complete':'Finished · ready for your next message',
+                            'cancelled':('Stopped by '+session.stop_source if session.stop_source else 'Stopped')+' · your progress is saved',
+                            'failed':'Something went wrong. See the message above.',
+                            'needs_review':'Buddy couldn’t read something it needed · see the note under its reply. Continue task tries again.'}.get(status,'Ready when you are')
+            if status=='complete' and session.attention:session.status='Buddy needs something from you · read the message above and reply'
+            if data.get('unread') or session.saved_followup:session.status='Your follow-up is saved · send another message to continue with it'
+        if cid==self.cid:
+            # A history switch can render a saved answer before its queued event
+            # arrives. Reconcile from SQLite rather than appending it twice.
+            if name=='message':self.render_history()
+            elif name=='usage':self.refresh_task_usage()
+            else:self.on_event(name,data)
+        elif name in ('done','attention'):
+            title=next((r['title'] for r in self.store.conversations() if r['id']==cid),'Conversation')
+            self.notify(title,session.status)
+        if name in ('done','attention','error'):self.refresh_history()
+        return False
+
     def on_event(self,name,data):
         if name=='status':self.status.remove_css_class('attention');self.status.set_text(self.redactor.text(str(data)))
         elif name=='attention':self.alert(str(data))
@@ -627,6 +713,13 @@ class BuddyApp(Gtk.Application):
             note=Gio.Notification.new(title);note.set_body(body);self.send_notification('buddy-status',note)
         except Exception:pass
 
+    def refresh_task_usage(self):
+        self.task_usage={};self.usage.set_text('')
+        tasks=self.store.tasks(self.cid)
+        if tasks:
+            for record in self.store.audits(tasks[0]['id']):
+                if record['event']=='usage':self.add_usage(json.loads(record['body']))
+
     def add_usage(self, data):
         for key in ('input_tokens', 'output_tokens', 'elapsed_seconds', 'estimated_cost_usd', 'reported_cost_usd'):
             if key in data:self.task_usage[key]=self.task_usage.get(key,0)+(data[key] or 0)
@@ -645,7 +738,14 @@ class BuddyApp(Gtk.Application):
         done=threading.Event();decision=[False];holder=[]
         def show():
             if token.event.is_set():done.set();return False
-            dialog=Gtk.Window(title='Review action',transient_for=self.window,modal=True,default_width=620,default_height=620,application=self)
+            session=self.task_for_token(token)
+            agent=session.agent if session else None
+            if session and session.cid!=self.cid:
+                if not session.attention:
+                    self.session_event(session.cid,session.generation,'attention','An action needs your approval · open this conversation to review it')
+                return True
+            title=next((r['title'] for r in self.store.conversations() if session and r['id']==session.cid),'Computer access')
+            dialog=Gtk.Window(title='Review action · '+title,transient_for=self.window,modal=False,default_width=620,default_height=620,application=self)
             box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=16)
             for side in ('top','bottom','start','end'):getattr(box,'set_margin_'+side)(24)
             dialog.set_child(box)
@@ -659,10 +759,11 @@ class BuddyApp(Gtk.Application):
                 'desktop.set_text':'Buddy will replace the contents of this field. That app may save or send the text online.',
                 'app.launch':'The application opens locally and may use its own network connection.'}
             hint=Gtk.Label(label=hints.get(name,'Desktop Buddy needs permission to perform this sensitive action.'),xalign=0,wrap=True);hint.add_css_class('muted');box.append(hint)
-            context=getattr(self.agent,'review_context',None) if self.agent and self.agent.token is token else None
+            box.append(Gtk.Label(label='Conversation: '+title,xalign=0,wrap=True))
+            context=getattr(agent,'review_context',None) if agent else None
             try:matching=context and context['name']==name and context['arguments']==json.loads(detail)
             except (ValueError,KeyError):matching=False
-            policy=self.agent.registry.policy if matching else None
+            policy=agent.registry.policy if matching else None
             reviewable=name!='shell.run' or bool(matching and context['purpose'])
             summary=approval_summary(name,detail,{c.id:c.name for c in self.mcp.configs().values()},
                 purpose=context['purpose'] if matching else '',workspace=str(policy.workspace) if policy else '',local_only=policy.local_only if policy else False)
@@ -680,7 +781,7 @@ class BuddyApp(Gtk.Application):
                 # Resume only after GTK has processed the dialog's destruction;
                 # physical tools then restore their pinned target before input.
                 GLib.idle_add(lambda:done.set() or False)
-            if self.agent and self.agent.token is token:
+            if agent:
                 def use_yolo(*_):
                     if token.event.is_set():finish(False);return
                     self.enable_yolo_for_task(token)
@@ -693,21 +794,24 @@ class BuddyApp(Gtk.Application):
             allow=button('Allow once',lambda *_:finish(True),'suggested-action');allow.set_sensitive(reviewable);row.append(allow)
             stop=button('Stop everything',lambda *_:self.emergency(),'destructive-action');stop.set_tooltip_text('Cancel all queued actions and revoke desktop control');row.append(stop)
             dialog.connect('close-request',lambda *_:finish(False) or False)
-            holder.append(dialog);self.pending.append((done,dialog));dialog.present();skip.grab_focus();readable.select_region(0,0);return False
-        GLib.idle_add(show)
+            holder.append(dialog);self.pending.append((done,dialog,token));dialog.present();skip.grab_focus();readable.select_region(0,0);return False
+        GLib.timeout_add(100,show)
         try:
             while not done.wait(.05):token.check()
             token.check();return decision[0]
         finally:
-            if holder:GLib.idle_add(holder[0].destroy)
-            self.pending[:]=[(e,d) for e,d in self.pending if e is not done]
+            def cleanup():
+                if holder:holder[0].destroy()
+                self.pending[:]=[(e,d,t) for e,d,t in self.pending if e is not done]
+                return False
+            GLib.idle_add(cleanup)
 
     def send(self,prompt=None,*,resume=False):
         prompt=prompt or content(self.input).strip()
         if not prompt:
             if self.pending_images or self.pending_files:self.notice('Tell Buddy what you would like to do with the attached file, then choose Send.')
             return
-        if self.worker and self.worker.is_alive():return self.send_during_task(prompt)
+        if self.current_session.running:return self.send_during_task(prompt)
         self.stop_source=None;self.saved_followup=False
         if self.emergency_latched:
             self.emergency_latched=False;self.status.set_text('Starting a new request. Computer access may need to be allowed again.')
@@ -736,27 +840,42 @@ class BuddyApp(Gtk.Application):
         self.cancel_button.set_visible(True)
         self.recovery_button.set_visible(False);self.spinner.start();self.status.set_text('Getting started…')
         # Send stays enabled: messages typed during a task are delivered at its next step.
-        self.history.set_sensitive(False);self.workspace.set_sensitive(False);self.start_token=StopToken();self.agent=None
+        self.workspace.set_sensitive(False);self.start_token=StopToken();self.agent=None
         mode=self.selected_mode();local=self.local.get_active();cid=self.cid
         self.active_model=config;self.update_model_hint()
+        session=self.current_session;session.generation+=1;generation=session.generation
+        session.done=None;session.stream='';session.status='Getting started…';session.attention=False
+        session.last_reply=''
+        self.ensure_backends()
         def work():
+            done={'status':'failed'}
+            manager=self.mcp.fork()
+            def emit(name,data):
+                nonlocal done
+                if name=='done':done=data
+                else:GLib.idle_add(self.session_event,cid,generation,name,data)
             try:
-                self.ensure_backends()
-                key=self.credentials.get(config.id) if not config.local else self.credentials.get(config.id)
+                session.start_token.check()
+                key=self.credentials.get(config.id)
                 policy=Policy(workspace,mode,local,self.approve,protected=[self.store.root,Path(__file__).parent])
-                registry=Registry(policy,self.store,self.desktop,self.a11y,self.clipboard,self.browser,self.mcp)
-                self.start_token.check()
-                self.agent=Agent(self.store,registry,Provider(config,key,self.redactor),self.emit)
-                self.agent.token=self.start_token
-                if self.emergency_latched:self.agent.stop()
-                self.agent.run(cid,prompt,resume=resume,images=images,user_saved=True,files=files)
-            except Cancelled:self.emit('done',{'status':'cancelled'})
+                registry=Registry(policy,self.store,self.desktop,self.a11y,self.clipboard,session.browser,manager)
+                registry.desktop_lease=self.desktop_lease
+                session.start_token.check()
+                session.agent=Agent(self.store,registry,Provider(config,key,self.redactor),emit)
+                session.agent.token=session.start_token
+                session.agent.run(cid,prompt,resume=resume,images=images,user_saved=True,files=files)
+            except Cancelled:done={'status':'cancelled'}
             except Exception as e:
                 tid=self.store.task(cid,{'request':prompt})
                 self.store.audit(tid,'task_error',{'error':str(e)})
                 self.store.checkpoint(tid,cid,'failed',{})
-                self.emit('error',str(e));self.emit('done',{'status':'failed'})
-        self.worker=threading.Thread(target=work,daemon=True,name='agent-task');self.worker.start()
+                emit('error',str(e));done={'status':'failed'}
+            finally:
+                self.desktop_lease.release(session.start_token)
+                manager.close()
+                GLib.idle_add(self.session_event,cid,generation,'done',done)
+        session.worker=threading.Thread(target=work,daemon=True,name='agent-'+cid)
+        session.worker.start();self.refresh_history()
 
     def send_during_task(self,prompt):
         """Hand a message to the running task without stopping it."""
@@ -786,21 +905,29 @@ class BuddyApp(Gtk.Application):
         if previous['status']=='complete':self.notice('The last task completed. Send a new request to continue.');return
         self.send('Resume the previous interrupted task using the conversation and this checkpoint. First inspect current state; never repeat an uncertain effect without asking. Checkpoint: '+previous['checkpoint'],resume=True)
 
+    def stop_session(self,session,source):
+        session.stop_source=source
+        if session.running:
+            self.store.audit(getattr(session.agent,'task_id',None) or 'ui','stopped',{'by':source})
+        session.start_token.stop()
+        if session.agent:session.agent.stop()
+        for done,dialog,token in list(self.pending):
+            if token is session.start_token:done.set();dialog.destroy()
+        if session.running:session.status='Stopping… waiting for the current action to respond'
+
     def cancel(self,source='the Stop button'):
-        self.stop_source=source
-        if self.worker and self.worker.is_alive():
-            self.store.audit(getattr(self.agent,'task_id',None) or 'ui','stopped',{'by':source})
-        self.start_token.stop()
-        if self.agent:self.agent.stop()
-        for token in self.aux_tokens:token.stop()
-        for done,dialog in list(self.pending):done.set();dialog.destroy()
-        self.status.set_text('Stopping… waiting for the current action to respond')
+        self.stop_session(self.current_session,source)
+        self.status.set_text(self.current_session.status)
 
     def emergency(self,source='the Stop everything button'):
-        self.emergency_latched=True;self.cancel(source)
+        self.emergency_latched=True
+        for session in list(self.sessions.values()):
+            self.stop_session(session,source)
+            session.browser.close()
+        for token in list(self.aux_tokens):token.stop()
+        for done,dialog,token in list(self.pending):done.set();dialog.destroy()
         if self.desktop:threading.Thread(target=self.desktop.close,daemon=True).start()
-        self.browser.close()
-        self.mcp.close()
+        self.mcp.close_all()
         self.status.set_text('Stopped · computer control and app connections are closed')
 
     def auxiliary(self,func):
@@ -990,5 +1117,7 @@ class BuddyApp(Gtk.Application):
         if not self.window.is_maximized():
             self.store.set('window_width',self.window.get_width())
             self.store.set('window_height',self.window.get_height())
-        self.save_draft();self.clear_attachments(True);self.emergency('closing the app')
+        self.save_draft();self.emergency('closing the app')
+        for cid in list(self.sessions):
+            self.cid=cid;self.clear_attachments(True)
         self.quit();return False

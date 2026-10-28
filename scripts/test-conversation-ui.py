@@ -70,10 +70,12 @@ def tick():
             app.activate_action('search-conversations')
             focus = app.window.get_focus()
             assert focus is not None and (focus == app.history_search or focus.is_ancestor(app.history_search))
+            draft_cid=app.cid
             pending = app.attach_image_path(source)
             app.activate_action('new-conversation')
-            assert not app.pending_images and not pending.exists()
-            result['draft_attachment_cleanup'] = True
+            assert not app.pending_images and pending.exists()
+            assert app.sessions[draft_cid].pending_images==[str(pending)]
+            result['draft_attachment_preserved_in_its_conversation'] = True
             result['keyboard_actions'] = True
             settings = app.providers_dialog()
             phase = 1
