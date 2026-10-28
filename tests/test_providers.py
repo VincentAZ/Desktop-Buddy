@@ -87,6 +87,10 @@ class FixtureServer(BaseHTTPRequestHandler):
     requests=[]
     def log_message(self,*args):pass
     def do_GET(self):
+        if self.path.endswith('/requires-key'):
+            self.send_response(401);self.send_header('Content-Length','0');self.end_headers();return
+        if self.path.endswith('/auth-echo'):
+            self.reply(json.dumps({'authorization':self.headers.get('Authorization')}).encode(),'application/json');return
         if self.path.endswith('/redirect'):
             self.send_response(302);self.send_header('Location','https://example.com');self.send_header('Content-Length','0');self.end_headers();return
         self.reply(json.dumps({'models':[{'name':'fixture'}]} if self.path.endswith('/api/tags') else {'data':[{'id':'fixture'}]}).encode(),'application/json')
@@ -94,6 +98,8 @@ class FixtureServer(BaseHTTPRequestHandler):
         self.send_response(200);self.send_header('Content-Type',ctype);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     def do_POST(self):
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));self.requests.append((self.path,body))
+        if self.path.endswith('/api/show'):
+            self.reply(json.dumps({'capabilities':['completion','tools']}).encode(),'application/json');return
         if self.path.endswith('/responses'):
             events=[{'type':'response.output_text.delta','delta':'fixture ok'},{'type':'response.completed','response':{'output':[{'type':'message','role':'assistant','content':[{'type':'output_text','text':'fixture ok'}]}],'usage':{'input_tokens':2,'output_tokens':3}}}]
         elif self.path.endswith('/messages'):
@@ -106,6 +112,24 @@ class FixtureServer(BaseHTTPRequestHandler):
         self.reply(data.encode(),'text/event-stream')
 
 class HTTPIntegrationTests(unittest.TestCase):
+    def test_keyless_model_connections_and_inference(self):
+        for pid,(_,_,protocol,local) in PROVIDERS.items():
+            with self.subTest(provider=pid):
+                provider=Provider(ProviderConfig(pid,self.url,protocol,local,model='fixture'))
+                self.assertIsNone(provider.request('/auth-echo',StopToken())['authorization'])
+                self.assertEqual(provider.models(StopToken())[0]['id'],'fixture')
+                answer,_=provider.complete([{'role':'user','content':'hello'}],[],StopToken())
+                self.assertEqual(answer['content'],'fixture ok')
+                if not local:
+                    with self.assertRaises(Denied):provider.check(True)
+
+    def test_endpoint_authentication_is_still_enforced(self):
+        provider=Provider(ProviderConfig('openai',self.url,'responses',False))
+        with self.assertRaisesRegex(ProviderError,'HTTP 401.*IT setup'):
+            provider.request('/requires-key',StopToken())
+        provider.key='fixture-key'
+        self.assertEqual(provider.request('/auth-echo',StopToken())['authorization'],'Bearer fixture-key')
+
     @classmethod
     def setUpClass(cls):
         cls.server=ThreadingHTTPServer(('127.0.0.1',0),FixtureServer)

@@ -29,7 +29,7 @@ class Model(BaseHTTPRequestHandler):
   n=len(tool_results)
   stop_test=any('Stop test' in str(m.get('content','')) for m in body['messages'] if m['role']=='user')
   if stop_test:
-   args={'name':'shell.run','arguments':{'argv':['sleep','20']}} if n==0 else {'name':'fs.write','arguments':{'path':'must-not-exist','content':'bad'}}
+   args={'name':'shell.run','arguments':{'argv':['sleep','20']},'purpose':'Wait briefly so the Stop button can be tested.'} if n==0 else {'name':'fs.write','arguments':{'path':'must-not-exist','content':'bad'}}
    delta={'tool_calls':[{'index':0,'id':'stop_'+str(n),'function':{'name':'run_tool','arguments':json.dumps(args)}}]};finish='tool_calls'
   elif n<2:
    args={'name':'fs.write','arguments':{'path':'ui-proof.txt','content':'Native UI agent workflow verified'}} if n==0 else {'name':'fs.read','arguments':{'path':'ui-proof.txt'}}

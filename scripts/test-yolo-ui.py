@@ -58,7 +58,7 @@ def tick():
         elif phase==1 and app.pending:
             dialog=app.pending[0][1]
             capture(dialog,'approval.png')
-            next(w for w in widgets(dialog) if isinstance(w,Gtk.Button) and w.get_label()=='Use YOLO for this and future tasks').emit('clicked')
+            next(w for w in widgets(dialog) if isinstance(w,Gtk.Button) and w.get_label()=='Allow and stop asking').emit('clicked')
             assert not app.start_token.event.is_set()
             assert app.selected_mode()=='yolo'
             assert app.store.get('mode')=='yolo'
@@ -70,16 +70,17 @@ def tick():
             assert 'Mode: yolo.' in providers[0].complete.call_args.args[0][0]['content']
             assert launch.call_count==1
             assert not app.pending
-            app.approve=Mock(side_effect=AssertionError('YOLO prompted again'))
+            app.approve=Mock(return_value=True)
             app.new_conversation();app.send('Do it again');phase=3
         elif phase==3 and not app.worker.is_alive():
             assert app.store.tasks(app.cid)[0]['status']=='complete'
             app.approve.assert_not_called()
             assert launch.call_count==2
             assert app.window.get_width()<=760
-            assert 'YOLO is on' in app.disclosure.get_text()
+            assert 'Just do it' in app.disclosure.get_text(),app.disclosure.get_text()
+            assert app.store.get('yolo_acknowledged') is True
             capture(app.window,'yolo.png')
-            result['subsequent_task_skips_cloud_and_action_approvals']=True
+            result['subsequent_task_runs_without_any_prompt']=True
             result['compact_layout']=True
             app.quit();return False
     except Exception as exc:

@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
-/usr/bin/python3 -m unittest discover -s tests -v
+buddy_python=/usr/bin/python3
+if [[ -x .venv/bin/python ]]; then buddy_python=.venv/bin/python; fi
+"$buddy_python" -m unittest discover -s tests -v
 if [[ "${1:-}" == "--desktop" ]]; then
-  /usr/bin/python3 scripts/test-yolo-ui.py
-  /usr/bin/python3 scripts/test-redesign-ui.py
-  /usr/bin/python3 scripts/test-model-ui.py
-  /usr/bin/python3 scripts/test-ui.py
-  /usr/bin/python3 scripts/test-conversation-ui.py
-  /usr/bin/python3 scripts/test-conversation-ui.py --compact
-  /usr/bin/python3 scripts/test-accessibility-control.py
-  /usr/bin/python3 scripts/test-physical-workflow.py
+  "$buddy_python" scripts/test-computer-access-ui.py
+  "$buddy_python" scripts/test-command-review-ui.py
+  "$buddy_python" scripts/test-file-ui.py
+  "$buddy_python" scripts/test-jane-ui.py
+  "$buddy_python" scripts/test-first-use-ui.py
+  "$buddy_python" scripts/test-mcp-ui.py
+  "$buddy_python" scripts/test-yolo-ui.py
+  "$buddy_python" scripts/test-redesign-ui.py
+  "$buddy_python" scripts/test-model-ui.py
+  "$buddy_python" scripts/test-ui.py
+  "$buddy_python" scripts/test-conversation-ui.py
+  "$buddy_python" scripts/test-conversation-ui.py --compact
+  "$buddy_python" scripts/test-accessibility-control.py
+  "$buddy_python" scripts/test-accessible-text-ui.py
+  "$buddy_python" scripts/test-rejected-text-ui.py
+  "$buddy_python" scripts/test-pointer-target-ui.py
+  "$buddy_python" scripts/test-physical-workflow.py
 fi

@@ -102,7 +102,7 @@ class ComfyUITests(unittest.TestCase):
             (workspace / 'workflow.json').write_text(json.dumps({'1': {'class_type': 'EmptyImage', 'inputs': {}}}))
             store = Store(root / 'state', Redactor());approvals=[]
             try:
-                policy = Policy(workspace, 'execute', True, lambda *args: approvals.append(args) or True, protected=[store.root])
+                policy = Policy(workspace, 'execute', False, lambda *args: approvals.append(args) or True, protected=[store.root])
                 with patch('desktop_buddy.tools.ComfyUI', lambda *_: ComfyUI(self.url)):
                     registry = Registry(policy, store)
                 result = registry.execute('comfyui.run', {'workflow_path': 'workflow.json', 'output_directory': 'results'}, StopToken(), 'task')
@@ -119,7 +119,7 @@ class ComfyUITests(unittest.TestCase):
             (workspace/'workflow.json').write_text(json.dumps({'1': {'class_type':'TextNode','inputs':{'text':''}}}))
             store=Store(root/'state',Redactor());approvals=[]
             try:
-                policy=Policy(workspace,'execute',True,lambda *args:approvals.append(args[0]) or True,protected=[store.root])
+                policy=Policy(workspace,'execute',False,lambda *args:approvals.append(args[0]) or True,protected=[store.root])
                 with patch('desktop_buddy.tools.ComfyUI',lambda *_:ComfyUI(self.url)):
                     registry=Registry(policy,store)
                 result=registry.execute('comfyui.run_batch',{'workflow_path':'workflow.json','prompt_node_id':'1',

@@ -64,15 +64,15 @@ class Provider:
     def check(self,local_only=False):
         if local_only and (not self.config.local or not local_url(self.config.base_url)):
             raise Denied('Local-only mode forbids this provider. Select LM Studio or Ollama on loopback.')
-        if not self.config.local and not self.key:
-            raise ProviderError('No API key saved. Open Connection settings and save your API key.')
+        # Authentication belongs to the configured endpoint. Local servers and
+        # IT-managed gateways may accept requests without an application key.
 
     def headers(self):
         h={'Content-Type':'application/json','User-Agent':'DesktopBuddy/'+__version__}
         if self.config.protocol=='anthropic':
-            h.update({'Authorization':'Bearer '+self.key,'anthropic-version':self.config.api_version})
+            h['anthropic-version']=self.config.api_version
             if self.config.workspace_id:h['anthropic-workspace-id']=self.config.workspace_id
-        elif self.key:
+        if self.key:
             h['Authorization']='Bearer '+self.key
         return h
 
@@ -106,7 +106,7 @@ class Provider:
                         redactor = Redactor();redactor.register(self.key);detail = redactor.text(detail)
                 except (ValueError, requests.RequestException):pass
                 finally:r.close()
-                guidance={401:'Check the API key.',403:'Check model/account access.',404:'Check the base URL and model identifier.',400:'Check model capabilities and reasoning settings.',429:'Rate limit reached; try again later.'}.get(code,'The provider rejected the request.')
+                guidance={401:'This model service requires valid credentials. IT can configure them in Settings → IT setup.',403:'Check model/account access.',404:'Check the base URL and model identifier.',400:'Check model capabilities and reasoning settings.',429:'Rate limit reached; try again later.'}.get(code,'The provider rejected the request.')
                 raise ProviderError(f'{self.config.id}: HTTP {code}. {guidance}' + (' '+detail[:600] if detail else ''))
             try:token.check()
             except Cancelled:
@@ -242,6 +242,7 @@ class Provider:
         if any(m.get('images') for m in messages) and not self.config.use_vision:
             raise ProviderError('This model is not configured for vision.')
         self.check(local_only)
+        if local_only:self.verify_local_model(token)
         from .inference import isolated_completion
         return isolated_completion(self.config,self.key,messages,tools,token,emit,local_only)
 

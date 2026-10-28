@@ -15,6 +15,10 @@ class Cancelled(Exception):
 class Denied(Exception):
     pass
 
+class InvalidArguments(ValueError):
+    """The requested operation was not attempted because its inputs were invalid."""
+    pass
+
 class StopToken:
     def __init__(self):
         self.event = threading.Event()
@@ -133,7 +137,14 @@ class Policy:
         self.protected = [Path(p).resolve() for p in protected]
 
     def request_approval(self, name, detail, token):
-        """YOLO is an explicit user grant, never an instruction from tool data."""
+        """Ask the person, unless they chose "Just do it" (yolo).
+
+        In yolo mode every action the model proposes is allowed without a
+        prompt: commands, typing, clicking, connected apps, online services and
+        files outside the work folder. The person opted into that explicitly in
+        the app; Stop still halts everything, Discuss only still blocks changes,
+        and credential paths stay off limits regardless of mode.
+        """
         token.check()
         allowed = self.mode == 'yolo' or self.approve(name, detail, token)
         token.check()
@@ -152,11 +163,14 @@ class Policy:
     def authorize(self, name, args, mutation, risk, token):
         token.check()
         if mutation and self.mode == 'plan':
-            raise Denied('Just discuss prevents changes. Choose Help me do it to allow actions.')
-        if self.local_only and risk in {'network','http'}:
-            raise Denied('Local-only mode blocks network operations initiated by Desktop Buddy.')
+            raise Denied('Discuss only prevents changes. Choose Ask before acting or Just do it to allow actions.')
+        if self.local_only and (risk in {'network','http','desktop_input','launch'} or
+                                (risk == 'compute' and name != 'comfyui.cancel')):
+            raise Denied('Local-only mode blocks network operations and control of other applications, '
+                         'including workflows whose custom nodes may transmit data. Turn off Keep Buddy offline in Settings '
+                         'explicitly to control applications; local observation and workspace files remain available.')
         outside = False
-        if name.startswith('fs.') or name.startswith('comfyui.'):
+        if name.startswith('fs.') or name.startswith('comfyui.') or name=='attachments.copy':
             for key in ('path','destination','workflow_path','output_directory'):
                 if key in args:
                     p = self.path(args[key], write=mutation)

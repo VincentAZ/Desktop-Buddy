@@ -1,5 +1,33 @@
 # Implementation plan
 
+## Jane UI completion audit — October 27
+
+The selected deployment model is IT-provided assistants. IT must be able to open Buddy and change models and vendors; Jane must not need developer accounts, keys, GitHub or MCP configuration for daily work.
+
+- [x] Native normal screen hides technical model controls; Settings → IT setup exposes vendor setup and saved assistant switching. First-use and model-switch fixtures verify these paths and preserve drafts/history.
+- [x] Readable control modes, work-folder access, document attachments and original preservation; saved preferences can be edited without JSON.
+- [x] App connection cards keep custom server fields separate; unavailable Google integrations do not send customers into technical setup.
+- [x] Error recovery, stop, permissions and restart persistence pass native regression checks.
+- [x] Stable-source verification: `run-gg2d6skf` passed all 29 checks, including 179 unit tests and 11 desktop fixtures.
+- [x] Command review now requires a plain-language proposal tied to the exact pending step, shows folder/time/network scope, and retains exact instructions under Technical details. Native allow/skip tests verify real file effects and denial; missing explanations and claimed approvals cannot bypass host checks.
+- [x] Agent guidance now names the actual controls and directs vendor/model setup to IT. Computer-access text makes remembering permission conditional. Final command-review renders were inspected; file-picker failures have readable recovery messages.
+
+UI completion verified by `.test-data/verification/run-y3c7n0o9/report.json`: 181 unit tests, display preflight and all 12 native/desktop scenarios passed; source fingerprints match before and after. Desktop and sidebar launchers still point to this checkout. This closes the Jane/IT UI goal. It does not certify the product’s unfinished Google integration or universal live-model/desktop-control acceptance; the separate release gates below remain open.
+
+## Current delivery pass — October 27
+
+- [x] Reinspect this workstation and preserve the existing dirty checkout; no commits.
+- [x] Recheck current Hermes Blank Slate, Codex provider/app-server source, provider APIs and native Wayland/MCP alternatives.
+- [x] Retain the implemented host-native harness rather than start a competing project.
+- [x] Reinstate the main-window model selector and narrow accelerated approvals.
+- [x] Close local-only GUI/custom-workflow network paths; retain observation, files and isolated shell.
+- [x] Distinguish blocked diagnostics from absent services; fix false-success GUI startup.
+- [x] Add bounded test execution with unique evidence paths and source fingerprints; use fresh physical-workflow output directories.
+- [x] Verify an isolated offline installation outside the checkout, including all eight skills.
+- [ ] Finish host-side native UI validation, GNOME screen/input consent, LM Studio GUI and live two-provider acceptance. This Codex session cannot access display/D-Bus or network sockets. Host test run requested; no security restriction was bypassed.
+
+See [current delivery](DELIVERY.md). The previous milestones and test counts below are historical, not proof of current acceptance.
+
 ## Active hardening and interface rebuild
 
 - [x] Replace the hidden model-name button with a persistent MODEL bar and explicit Change model action.

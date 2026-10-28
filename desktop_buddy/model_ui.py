@@ -90,8 +90,8 @@ class ModelMenu:
         self.filling = False
         self.button = Gtk.MenuButton()
         self.button.add_css_class('model-menu')
-        self.button.set_tooltip_text('Choose which AI model Buddy uses and how much it thinks')
-        self.button.update_property([Gtk.AccessibleProperty.LABEL], ['Model and thinking level'])
+        self.button.set_tooltip_text('Choose a saved assistant or adjust how much time it takes to answer')
+        self.button.update_property([Gtk.AccessibleProperty.LABEL], ['Choose your assistant'])
         face = Gtk.Box(spacing=8)
         self.title = label('', ellipsize=3)
         self.title.set_max_width_chars(34)
@@ -103,7 +103,9 @@ class ModelMenu:
         self.button.set_popover(self.popover)
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.box.set_size_request(340, -1)
-        self.popover.set_child(self.box)
+        menu_scroll=scroller(self.box,expand=False)
+        menu_scroll.set_max_content_height(460);menu_scroll.set_propagate_natural_height(True)
+        self.popover.set_child(menu_scroll)
         self.refresh()
 
     def current(self, configs=None):
@@ -121,17 +123,20 @@ class ModelMenu:
         current = self.current(configs)
         if current.model:
             self.title.set_text(f'{current.model} · {thinking_label(current.id, current.reasoning)} thinking')
-        else:self.title.set_text('Choose a model')
+        else:self.title.set_text('Assistant setup incomplete')
+        if hasattr(self.app,'assistant_status'):
+            self.app.assistant_status.set_text('Assistant · '+PROVIDERS[current.id][0] if current.model else 'Waiting for IT setup')
         self.filling = True
         try:
+            answering_expanded=getattr(self,'answering',None) is not None and self.answering.get_expanded()
             while self.box.get_first_child():self.box.remove(self.box.get_first_child())
             running = bool(self.app.worker and self.app.worker.is_alive())
             self.app.model_hint = label('', 'status', wrap=True)
             self.app.update_model_hint()
-            self.box.append(label('MODEL', 'eyebrow'))
+            self.box.append(label('YOUR ASSISTANT', 'eyebrow'))
             profiles = self.profiles(configs)
             if not profiles:
-                self.box.append(label('No models yet. Add one below.', 'muted', wrap=True))
+                self.box.append(label('No assistant has been configured. IT can add one below by choosing a vendor and model.', 'muted', wrap=True))
             group = None
             for config in profiles:
                 selected = (config.id, config.model) == (current.id, current.model)
@@ -141,25 +146,32 @@ class ModelMenu:
                 group = group or row
                 self.box.append(row)
             if current.model:
-                self.box.append(label('THINKING', 'eyebrow'))
+                self.answering=Gtk.Expander(label='Answering preferences · '+thinking_label(current.id,current.reasoning))
+                levels=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=6)
+                levels.append(label('You can leave this as it is. More thinking can help with difficult requests and take longer.', 'muted',wrap=True))
                 group = None
                 for title, wire, hint in thinking_choices(current.id, current.model):
                     row = self.choice(title, hint, wire == current.reasoning, group, lambda w=wire: self.pick_thinking(w))
                     group = group or row
-                    self.box.append(row)
+                    levels.append(row)
+                self.answering.set_child(levels);self.answering.set_expanded(answering_expanded);self.box.append(self.answering)
             self.note = label('', 'status', wrap=True)
             offline = getattr(self.app, 'local', None)
             blocked = current.model and offline is not None and offline.get_active() and not current.local
-            if blocked:self.note.set_text('Offline mode is on. Turn it off in Task options (the gear beside Send) to use this online model.')
+            if blocked:self.note.set_text('Buddy is offline. Open Settings to allow your online assistant to answer.')
             elif running:self.note.set_text('A task is running. Your choice applies to the next message.')
             self.note.set_visible(bool(self.note.get_text()))
             self.box.append(self.note)
             self.box.append(self.app.model_hint)
             self.app.model_hint.set_visible(running)
             self.box.append(Gtk.Separator())
-            self.box.append(button('Add or set up a model…', lambda *_: (self.popover.popdown(), self.app.providers_dialog())))
+            self.advanced=Gtk.Expander(label='Advanced · assistant setup')
+            advanced=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=8)
+            advanced.append(label('For someone managing this installation. You do not need to configure an AI service for everyday work.', 'muted',wrap=True))
+            advanced.append(button('Add or set up a model…', lambda *_: (self.popover.popdown(), self.app.providers_dialog())))
             if current.model:
-                self.box.append(button('Advanced settings for this model…', lambda *_: (self.popover.popdown(), self.app.providers_dialog(current))))
+                advanced.append(button('Advanced settings for this model…', lambda *_: (self.popover.popdown(), self.app.providers_dialog(current))))
+            self.advanced.set_child(advanced);self.box.append(self.advanced)
         finally:self.filling = False
 
     def choice(self, title, hint, active, group, callback):
@@ -198,10 +210,10 @@ class ConnectionDialog:
         self.token = None
         self.closed = False
         self.filling = False
-        self.window, outer = window(app, 'Set up your assistant', height=700)
+        self.window, outer = window(app, 'Advanced assistant setup', height=700)
         self.window.connect('close-request', self.close)
-        outer.append(label('Set up your assistant', 'brand'))
-        outer.append(label('Choose your AI service, connect your account, then pick a model.', 'muted', wrap=True))
+        outer.append(label('Advanced assistant setup', 'brand'))
+        outer.append(label('Connect directly to a local model or an online model service. No Desktop Buddy account or sign-in is needed. IT can change the vendor and model here.', 'muted', wrap=True))
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         outer.append(scroller(body, minimum=260))
         self.connection_expander = Gtk.Expander(label='1  Choose your AI service')
@@ -221,7 +233,7 @@ class ConnectionDialog:
         self.key.set_property('placeholder-text', 'Paste a key, or leave blank to use your saved key')
         self.key.update_property([Gtk.AccessibleProperty.LABEL], ['Connection key (API key)'])
         connection.append(self.key)
-        self.key_hint = label('Get an API key from your AI service’s account settings. Saved securely in your computer’s keyring.', 'muted', wrap=True)
+        self.key_hint = label('Leave blank if your model server needs no key. If the service requires one, IT supplies it; saved keys stay in this computer’s keyring.', 'muted', wrap=True)
         connection.append(self.key_hint)
         self.privacy = Gtk.CheckButton(label='Keep Buddy offline (local models only)')
         self.privacy.set_active(app.local.get_active())
@@ -355,7 +367,7 @@ class ConnectionDialog:
         self.tools.set_active(c.use_tools)
         self.vision.set_active(c.use_vision)
         self.key.set_text('')
-        self.key_label.set_text('API key (optional for local servers)' if c.local else 'Connection key (API key)')
+        self.key_label.set_text('API key (only if your model service requires one)')
         self.key_label.set_tooltip_text('Stored in GNOME Keyring; never in the conversation or config file.')
         catalog = self.app.store.get('model_catalogs', {}).get(c.id, {})
         ids = catalog.get('ids', []) if catalog.get('base_url') == c.base_url else []
@@ -461,11 +473,13 @@ class ConnectionDialog:
         for name, field in self.fields.items():
             raw = field.get_text().strip()
             setattr(c, name, int(raw) if name in ('context_tokens','max_output') else float(raw or 0) if name.endswith('_cost') else raw)
-        c.reasoning = thinking_value(self.thinking)
         c.protocol = ['responses','chat','anthropic','ollama'][self.protocol.get_selected()]
+        c.set_thinking(thinking_value(self.thinking))
         c.tools = self.tools.get_active()
         c.vision = self.vision.get_active()
-        return c.validate()
+        c.validate()
+        self.fields['max_output'].set_text(str(c.max_output))
+        return c
 
     def busy(self, value):
         self.operation_busy = value

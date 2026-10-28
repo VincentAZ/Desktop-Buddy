@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import codecs
 import hashlib
 import json
 import os
@@ -7,11 +8,12 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
 import requests
-from .security import Denied, Cancelled
+from .security import Denied, Cancelled, InvalidArguments
 from .comfyui import ComfyUI
 
 @dataclass
@@ -35,22 +37,22 @@ def validate(value,spec,path='arguments'):
     typ=spec.get('type')
     types={'object':dict,'array':list,'string':str,'integer':int,'number':(int,float),'boolean':bool}
     if typ in types and (not isinstance(value,types[typ]) or typ in ('integer','number') and isinstance(value,bool)):
-        raise ValueError(f'{path} must be {typ}.')
-    if 'enum' in spec and value not in spec['enum']:raise ValueError(f'{path} must be one of {spec["enum"]}.')
+        raise InvalidArguments(f'{path} must be {typ}.')
+    if 'enum' in spec and value not in spec['enum']:raise InvalidArguments(f'{path} must be one of {spec["enum"]}.')
     if isinstance(value,dict):
         for k in spec.get('required',[]):
-            if k not in value:raise ValueError(f'Missing {path}.{k}.')
+            if k not in value:raise InvalidArguments(f'Missing {path}.{k}.')
         for k,v in value.items():
             if k not in spec.get('properties',{}):
-                if spec.get('additionalProperties') is False:raise ValueError(f'Unknown argument {path}.{k}.')
+                if spec.get('additionalProperties') is False:raise InvalidArguments(f'Unknown argument {path}.{k}.')
             else:validate(v,spec['properties'][k],path+'.'+k)
     if isinstance(value,list):
-        if len(value)>200:raise ValueError('Too many array elements.')
+        if len(value)>200:raise InvalidArguments('Too many array elements.')
         for v in value:validate(v,spec.get('items',{}),path+'[]')
-    if isinstance(value,str) and len(value)>200000:raise ValueError('Tool argument exceeds 200000 characters.')
+    if isinstance(value,str) and len(value)>200000:raise InvalidArguments('Tool argument exceeds 200000 characters.')
 
 class Files:
-    def __init__(self,policy):self.policy=policy
+    def __init__(self,policy):self.policy=policy;self.read_revisions={}
 
     def parent(self,raw):
         # Open each directory without following links. dir_fd operations pin parents
@@ -64,14 +66,44 @@ class Files:
             return fd,p.name,p
         except Exception:os.close(fd);raise
 
-    def read(self,path):
+    def read(self,path,offset=0,limit=100000,expected_revision=''):
+        if isinstance(offset,bool) or not isinstance(offset,int) or offset<0:
+            raise InvalidArguments('offset is a byte position from the start of the file and cannot be negative. Start with offset=0 to learn total_bytes, then choose a position near the end if needed.')
+        if isinstance(limit,bool) or not isinstance(limit,int) or not 4<=limit<=100000:
+            raise InvalidArguments('limit counts bytes, not lines. Read between 4 and 100000 bytes per page.')
+        if expected_revision and (len(expected_revision)!=64 or any(ch not in '0123456789abcdef' for ch in expected_revision)):
+            raise InvalidArguments('expected_revision must be copied from a previous read result. Omit it for the first read or when starting over; never invent it.')
         parent,name,p=self.parent(path)
         try:
             fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=parent)
             with os.fdopen(fd,'rb') as f:
-                if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):raise Denied('Only regular files may be read.')
-                raw=f.read(100001)
-            return {'path':str(p),'content':raw[:100000].decode('utf-8',errors='replace'),'truncated':len(raw)>100000,'sha256':hashlib.sha256(raw).hexdigest() if len(raw)<=100000 else None}
+                before=os.fstat(f.fileno())
+                if not stat.S_ISREG(before.st_mode):raise Denied('Only regular files may be read.')
+                def revision(st):
+                    return hashlib.sha256(str((st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns)).encode()).hexdigest()
+                version=revision(before)
+                expected=expected_revision or (self.read_revisions.get(str(p),'') if offset else '')
+                if expected and expected!=version:
+                    raise ValueError('The file changed between pages. Start again at offset=0 without expected_revision; do not combine different versions.')
+                if offset>before.st_size:raise InvalidArguments('The requested byte position is past the end of the file. Read offset=0 to check total_bytes.')
+                f.seek(offset);raw=f.read(limit+1)
+                if offset and raw and raw[0]&0xc0==0x80:
+                    raise InvalidArguments('This offset is not valid UTF-8 character alignment. Use next_offset from the previous page instead of choosing a position inside a character.')
+                decoder=codecs.getincrementaldecoder('utf-8')()
+                try:content=decoder.decode(raw[:limit],final=len(raw)<=limit)
+                except UnicodeDecodeError:
+                    raise ValueError('This range is not valid UTF-8 text. Use the returned next_offset for another page; other file formats need their document reader or application.') from None
+                consumed=min(len(raw),limit)-len(decoder.getstate()[0])
+                if revision(os.fstat(f.fileno()))!=version:
+                    raise ValueError('The file changed while reading. Read it again before using its contents.')
+            if len(self.read_revisions)>=256 and str(p) not in self.read_revisions:
+                self.read_revisions.pop(next(iter(self.read_revisions)))
+            self.read_revisions[str(p)]=version
+            more=offset+consumed<before.st_size
+            return {'path':str(p),'content':content,'offset':offset,'bytes_read':consumed,
+                    'total_bytes':before.st_size,'next_offset':offset+consumed if more else None,
+                    'revision':version,'truncated':more,
+                    'sha256':hashlib.sha256(raw).hexdigest() if offset==0 and not more else None}
         finally:os.close(parent)
 
     def write(self,path,content,expected_sha256=''):
@@ -182,7 +214,7 @@ def run_process(argv,cwd,token,timeout=120,local_only=False,progress=None,attent
             '--clearenv','--setenv','PATH',os.defpath,'--setenv','LANG','C.UTF-8','--setenv','HOME',str(cwd),'--',*argv]
     else:command=argv
     token.check()
-    start=time.monotonic();reported=start;shown=' '.join(argv)[:70];password_prompt=argv[0]=='pkexec';alerted=False
+    start=time.monotonic();reported=start;password_prompt=argv[0]=='pkexec';alerted=False
     with tempfile.TemporaryFile() as output:
         proc=subprocess.Popen(command,cwd=cwd,env=env,stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
         try:
@@ -195,12 +227,12 @@ def run_process(argv,cwd,token,timeout=120,local_only=False,progress=None,attent
                 if os.fstat(output.fileno()).st_size>2*1024*1024:
                     token._kill(proc);proc.wait();raise ValueError('Command output exceeded 2 MiB; process group killed.')
                 if progress and now-reported>=1:
-                    reported=now;elapsed=int(now-start);line=_last_line(output)
+                    reported=now;elapsed=int(now-start)
                     if password_prompt and _waiting_for_password(proc):
                         text=f'Ubuntu is asking for your password · look for the “Authentication Required” box · waiting {elapsed//60}m {elapsed%60:02d}s'
                         if attention and not alerted:alerted=True;attention(text)
                         else:progress(text)
-                    else:progress(f'Running: {shown} · {elapsed//60}m {elapsed%60:02d}s of up to {timeout//60}m'+(' · '+line if line else ''))
+                    else:progress(f'Working on this computer · {elapsed//60}m {elapsed%60:02d}s elapsed · time limit {timeout//60}m {timeout%60:02d}s')
             token.check();output.seek(0);data=output.read(60001)
             return {'exit_code':proc.returncode,'output':data[:60000].decode(errors='replace'),'truncated':len(data)>60000,'elapsed_seconds':round(time.monotonic()-start,3),'verified':proc.returncode==0}
         finally:
@@ -208,9 +240,10 @@ def run_process(argv,cwd,token,timeout=120,local_only=False,progress=None,attent
             token._kill(proc);proc.wait();token.untrack(proc)
 
 class Registry:
-    def __init__(self,policy,store,desktop=None,accessibility=None,clipboard=None,browser=None):
+    def __init__(self,policy,store,desktop=None,accessibility=None,clipboard=None,browser=None,mcp=None):
         self.policy=policy;self.store=store;self.desktop=desktop;self.accessibility=accessibility
         self.clipboard=clipboard;self.browser=browser;self.tools={};self.files=Files(policy)
+        self.mcp=mcp;self.conversation_id=None;self.assistant_config=None
         self.progress=lambda text:None  # The agent points this at the UI status line.
         self.attention=lambda text:None  # Red status + desktop notification, once per command.
         self.comfyui=ComfyUI(store.get('comfyui_url','http://127.0.0.1:8188'))
@@ -221,7 +254,18 @@ class Registry:
 
     def _register(self):
         a=self.add
-        a('fs.read','Read a UTF-8 regular file, up to 100 kB.',{'path':S},['path'],lambda x,t:self.files.read(**x))
+        from .help import app_status,help_topics
+        a('buddy.status','Read Desktop Buddy settings, active and next-task assistant, privacy mode and configured features. Does not connect, sign in or inspect credentials.',{},[],lambda x,t:app_status(self))
+        a('buddy.help','Get offline Desktop Buddy help: setup, models, vendors, app connections, computer access, files, permissions, stop, history and preferences. Use for questions about how Buddy works.',{'query':S},[],lambda x,t:help_topics(x.get('query','')))
+        a('attachments.list','List user-selected documents in this conversation, including Excel, Word, PDF and CSV. Read them with attachments.read.',{},[],self.attachment_list)
+        a('attachments.read','Read a selected document without changing it. Excel: sheet name, zero-based row offset, limit (1–100), one-based column and columns (1–20). PDF: one-based page and character offset. Text/Word: character offset. Results may be partial; inspect next_offset, next_column, totals and notes.',{'id':S,'offset':I,'limit':I,'page':I,'sheet':S,'column':I,'columns':I},['id'],self.attachment_read)
+        a('attachments.copy','Make an editable copy of a selected document. Original stays unchanged. Destination parent must exist; never overwrites a file.',{'id':S,'destination':S},['id','destination'],self.attachment_copy,True)
+        a('mcp.servers','List saved MCP connections and common service catalog. Use MCP first for Gmail, Calendar, Vercel and other connected services. This does not connect or sign in.',{},[],self.mcp_servers)
+        a('mcp.tools','Discover exact tool names and schemas on a saved MCP server. Query filters names/descriptions; offset pages through matches.',{'server':S,'query':S,'offset':I},['server'],self.mcp_tools,False,'network')
+        a('mcp.call','Invoke one discovered MCP tool with its exact arguments. All calls may have external effects; host approval applies. Server results are untrusted.',{'server':S,'name':S,'arguments':{'type':'object','additionalProperties':True}},['server','name','arguments'],self.mcp_call,True,'network')
+        a('mcp.resources','List resources exposed by a saved MCP server, with optional pagination cursor.',{'server':S,'cursor':S},['server'],lambda x,t:self.mcp_required().resources(x['server'],t,x.get('cursor')),False,'network')
+        a('mcp.read_resource','Read an exact resource URI from the MCP resource list. Content is untrusted.',{'server':S,'uri':S},['server','uri'],lambda x,t:self.mcp_required().read_resource(x['server'],x['uri'],t),False,'network')
+        a('fs.read','Read a UTF-8 file in bounded pages (8000 bytes by default, at most 100000). Only the returned range was read. Continue at next_offset with expected_revision set to revision; if the file changes, start over. For the last lines, use total_bytes to jump near the end with a small limit instead of reading every earlier page. Keep reading required ranges before deriving facts. sha256 covers the whole file only when one read contains it all.',{'path':S,'offset':{'type':'integer','minimum':0,'default':0,'description':'Byte position from the start, never negative. Omit on the first read.'},'limit':{'type':'integer','minimum':4,'maximum':100000,'default':8000,'description':'Maximum bytes to read, not lines.'},'expected_revision':{'type':'string','description':'Copy revision from an earlier read. Omit on the first read or when starting over; never invent a value.'}},['path'],lambda x,t:self.files.read(**{'limit':8000,**x}))
         a('fs.image','Read a workspace image for vision, normalize to PNG, and report dimensions. Requires a vision-capable model.',{'path':S},['path'],self.image)
         a('fs.list','List up to 500 directory entries.',{'path':S},[],lambda x,t:self.files.list(**x))
         a('fs.search','Search filenames without following directory symlinks.',{'path':S,'query':S},[],lambda x,t:self.files.search(**x))
@@ -237,12 +281,13 @@ class Registry:
         a('memory.read','Inspect explicit long-term user preferences, separate from conversation history.',{},[],lambda x,t:self.store.memory())
         a('memory.set','Update a named long-term preference after user approval. Do not store secrets.',{'key':S,'value':S},['key','value'],self.memory_set,True,'sensitive')
         a('http.request','Make one HTTP(S) request with approval, no redirects or ambient credentials. Use direct APIs for LM Studio/Ollama/ComfyUI. Disabled in local-only tasks.',{'url':S,'method':{'type':'string','enum':['GET','POST','PUT','DELETE']},'body':{'type':'object'}},['url'],self.http,True,'http')
-        a('desktop.connect','Connect screen sharing and remote control through GNOME. Required once before desktop.input; the user clicks Share in a GNOME dialog and the grant is remembered for next time. Screenshots and accessibility do not need it.',{},[],self.connect,True,'desktop_input')
-        a('desktop.screenshot','Capture the physical desktop through GNOME consent. Returns local PNG and dimensions. Compare hashes or use vision to verify.',{},[],self.screenshot)
-        a('desktop.accessibility','Inspect accessible applications, windows and controls via AT-SPI. Paths are ephemeral: refresh before acting.',{'app':S,'window':S,'depth':I,'limit':I},[],self.a11y)
-        a('desktop.input','Send pointer/key actions to the shared physical monitor. Coordinates use logical_size. Every action needs approval; observe afterwards.',{'action':{'type':'string','enum':['move','click','scroll','key','type','drag']},'x':N,'y':N,'to_x':N,'to_y':N,'button':{'type':'string','enum':['left','right','middle']},'double':B,'axis':I,'steps':I,'keys':S,'text':S},['action'],self.input,True,'desktop_input')
+        a('desktop.connect','Connect screen sharing and remote control through GNOME. Buddy does this automatically before desktop.input and desktop.screenshot when the computer remembered the permission; call it explicitly only when a previous attempt said the screen is not shared. The person may see a system dialog and clicks Share.',{},[],self.connect,True,'desktop_input')
+        a('desktop.screenshot','Capture the real screen and return a local PNG with its size and coordinate mapping. Look at it to decide where to click; pass positions from this image to desktop.input.',{},[],self.screenshot)
+        a('desktop.accessibility','Inspect accessible applications, windows and controls via AT-SPI. When the user gives a window title, use window and omit app. Depth 6 is useful for fields; depth 1 lists windows only. Follow suggested_retry on empty results. Paths are ephemeral: refresh before acting.',{'app':{'type':'string','description':'Accessible application name, not a window title. Omit if unknown.'},'window':{'type':'string','description':'Window title substring. Use this alone when looking for a titled window.'},'depth':I,'limit':I},[],self.a11y)
+        a('desktop.input','Use the mouse or keyboard on the real screen. Simplest form: after desktop.screenshot, click/move/scroll/drag at pixel positions in that image (coordinates="screenshot", the default) or type text / press keys (keys like "Ctrl+s", "Return", "Alt+Tab"); no target fields needed. Buddy connects screen sharing itself if the computer remembered the permission. Alternatively pass target_path, expected_name and expected_window from desktop.accessibility with coordinates="screen" and Buddy verifies that exact control before acting. Take a new screenshot afterwards to check the result.',{'action':{'type':'string','enum':['move','click','scroll','key','type','drag']},'coordinates':{'type':'string','enum':['screenshot','screen'],'description':'Which space x/y are in: pixels of the latest screenshot (default) or global screen coordinates from desktop.accessibility.'},'keyboard_scope':{'type':'string','enum':['control','window']},'target_path':S,'expected_name':S,'expected_window':S,'x':N,'y':N,'to_x':N,'to_y':N,'button':{'type':'string','enum':['left','right','middle']},'double':B,'axis':I,'steps':I,'keys':S,'text':S},['action'],self.input,True,'desktop_input')
         a('desktop.accessible_action','Focus or invoke a named accessible action after verifying expected element name.',{'path':S,'action':S,'expected_name':S},['path','action','expected_name'],self.accessible_action,True,'desktop_input')
-        a('desktop.window','GNOME keyboard window operations on the currently focused window. Verify focus before using. Exact geometry requires supported compositor tooling.',{'action':{'type':'string','enum':['maximize','restore','move','resize','next']}},['action'],self.window,True,'desktop_input')
+        a('desktop.set_text','Replace all text in one observed editable control through accessibility and verify readback. Prefer this to physical typing. No focus switch or portal connection needed. Refuses password fields, stale fields and text longer than 4000 characters. Approval applies to the exact field and replacement.',{'target_path':S,'expected_name':S,'expected_window':S,'text':S},['target_path','expected_name','expected_window','text'],self.direct_text,True,'desktop_input')
+        a('desktop.window','Maximize, restore, move, resize the active window or switch to the next one (GNOME shortcuts). Optionally pass target_path, expected_name and expected_window from desktop.accessibility to have Buddy focus that window first. Observe afterwards.',{'action':{'type':'string','enum':['maximize','restore','move','resize','next']},'target_path':S,'expected_name':S,'expected_window':S},['action'],self.window,True,'desktop_input')
         a('desktop.clipboard_read','Read clipboard text; may contain sensitive data. Explicit permission required.',{},[],lambda x,t:self._clipboard('read',None),False,'sensitive')
         a('desktop.clipboard_write','Replace clipboard text with explicit permission.',{'text':S},['text'],lambda x,t:self._clipboard('write',x['text']),True,'desktop_input')
         a('app.launch','Launch an installed application by registered desktop ID (from system.inspect). No arbitrary command or hidden argument.',{'desktop_id':S},['desktop_id'],self.launch,True,'launch')
@@ -264,16 +309,90 @@ class Registry:
         tool=self.tools[name];validate(args,tool.parameters)
         # JSON copy detaches the exact authorized arguments from mutable caller objects.
         args=json.loads(json.dumps(args))
+        target=None;raw=False
+        if name in ('desktop.input','desktop.window','desktop.set_text') and self.policy.mode!='plan' and not self.policy.local_only:
+            if name=='desktop.input':
+                required={'move':('x','y'),'click':('x','y'),'scroll':('x','y','steps'),
+                          'drag':('x','y','to_x','to_y'),'key':('keys',),'type':('text',)}[args['action']]
+                for key in required:
+                    if key not in args:raise InvalidArguments('Missing arguments.'+key+'.')
+            pinned=bool(args.get('target_path'))
+            if name=='desktop.set_text' and not pinned:
+                raise InvalidArguments('desktop.set_text needs target_path, expected_name and expected_window from desktop.accessibility. For an app without accessible fields, click the field and use desktop.input type instead.')
+            if pinned:
+                if not self.accessibility:raise Denied('Cannot verify the intended app. Computer accessibility is unavailable; no input was sent.')
+                for key in ('expected_name','expected_window'):
+                    if key not in args:raise InvalidArguments('Missing arguments.'+key+' (copy it from desktop.accessibility).')
+                target=self.accessibility.input_target(args['target_path'],args['expected_name'])
+                if target.window_name!=args['expected_window']:raise Denied('The target is in a different window. Inspect the intended app again before acting.')
+                if name=='desktop.input':target.prepare_input(args)
+                if name=='desktop.set_text':
+                    if len(args['text'])>4000:raise ValueError('Enter at most 4000 characters per field.')
+                    target.prepare_text()
+            else:
+                raw=True
+                if not self.desktop:raise RuntimeError('Desktop control is unavailable on this computer.')
+                if name=='desktop.input' and args.get('coordinates','screenshot')=='screenshot' and args['action'] in ('move','click','scroll','drag'):
+                    args=self.desktop.from_screenshot(args)  # fails early if there is no screenshot yet
+                    args['coordinates']='screen'
         self.policy.authorize(name,args,tool.mutation,tool.risk,token)
         token.check();self.store.audit(tid,'tool_started',{'name':name,'arguments':args})
         try:
-            result=tool.handler(args,token)
+            if target:
+                if name=='desktop.set_text':result=target.set_text(args['text'],token)
+                else:
+                    physical=args if name=='desktop.input' else self.window_input(args)
+                    mapped=self.desktop.screen_input(physical)
+                    verify=target.restore(token,physical,lambda:self.desktop.key('Alt+Tab',token))
+                    result=self.desktop.input(mapped,token,verify_target=verify)
+            elif raw:
+                if not getattr(self.desktop,'session',None):
+                    self.progress('Connecting to your screen…');self.desktop.connect(token)
+                physical=args if name=='desktop.input' else self.window_input(args)
+                result=self.desktop.input(self.desktop.screen_input(physical),token)
+                result['next']='Take a new desktop.screenshot to check what happened.'
+            else:result=tool.handler(args,token)
             token.check();result=self.store.redactor.clean(result)
             self.store.audit(tid,'tool_finished',{'name':name,'result':result})
             return result
         except Exception as e:
             self.store.audit(tid,'tool_error',{'name':name,'error':str(e)})
             raise
+
+    def attachment_list(self,x,token):
+        from .attachments import selected_files
+        return [{'id':v['id'],'name':v['name'],'size':v['size'],'kind':v['kind']} for v in selected_files(self.store,self.conversation_id)]
+
+    def attachment_read(self,x,token):
+        from .attachments import snapshot
+        item,path=snapshot(self.store,self.conversation_id,x['id'])
+        options={k:v for k,v in x.items() if k!='id'}
+        result=run_process([sys.executable,'-m','desktop_buddy.attachments',str(path),json.dumps(options)],Path(__file__).resolve().parent.parent,token,20)
+        if result['truncated']:raise ValueError('The document result is too large. Request fewer rows or a later column.')
+        try:value=json.loads(result['output'])
+        except ValueError:raise ValueError('Buddy could not read this document within its reading limits. Try a smaller file or open it in its app.') from None
+        if result['exit_code'] or 'error' in value:raise ValueError(value.get('error','This document could not be read.'))
+        return {'name':item['name'],**value}
+
+    def attachment_copy(self,x,token):
+        from .attachments import snapshot
+        item,path=snapshot(self.store,self.conversation_id,x['id'])
+        parent,name,destination=self.files.parent(x['destination'])
+        created=False
+        try:
+            fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=parent);created=True
+            digest=hashlib.sha256()
+            with os.fdopen(fd,'wb') as target,path.open('rb') as source:
+                while chunk:=source.read(65536):
+                    token.check();target.write(chunk);digest.update(chunk)
+                target.flush();os.fsync(target.fileno())
+            token.check()
+            if digest.hexdigest()!=item['sha256']:raise ValueError('The attached copy changed while copying. Attach the original again.')
+            return {'path':str(destination),'sha256':digest.hexdigest(),'original_unchanged':True,'verified':True}
+        except BaseException:
+            if created:os.unlink(name,dir_fd=parent)
+            raise
+        finally:os.close(parent)
 
     def system(self,x,token):
         import platform
@@ -325,7 +444,7 @@ class Registry:
                     original=im.size;im=im.convert('RGB');im.thumbnail((1920,1920))
                     out=self.store.root/'images'/(uuid.uuid4().hex+'.png');out.parent.mkdir(parents=True,exist_ok=True)
                     t.check();im.save(out);os.chmod(out,0o600)
-                    return {'path':str(out),'source':str(p),'original_size':original,'width':im.width,'height':im.height}
+                    return {'path':str(out),'source':str(p),'original_size':original,'width':im.width,'height':im.height,'sha256':hashlib.sha256(out.read_bytes()).hexdigest()}
         finally:os.close(parent)
 
     def connect(self,x,t):
@@ -348,9 +467,15 @@ class Registry:
         if not self.accessibility:raise RuntimeError('Accessibility unavailable.')
         return self.accessibility.act(**x)
 
+    def direct_text(self,x,t):
+        raise Denied('Text entry requires a target captured before approval. Use the registered tool execution path.')
+
     def window(self,x,t):
+        return self.input(self.window_input(x),t)
+
+    def window_input(self,x):
         keys={'maximize':'Super+Up','restore':'Super+Down','move':'Alt+F7','resize':'Alt+F8','next':'Alt+Tab'}
-        return self.input({'action':'key','keys':keys[x['action']]},t)
+        return {'action':'key','keys':keys[x['action']]}
 
     def _clipboard(self,operation,text):
         if not self.clipboard:raise RuntimeError('Clipboard requires the running desktop UI.')
@@ -367,15 +492,46 @@ class Registry:
 
     def navigate(self,x,t):
         if not self.browser:raise RuntimeError('Browser control unavailable.')
-        return self.browser.navigate(x['url'],t)
+        if self.mcp:self.browser.set_url_guard(self.mcp.require_browser_fallback)
+        if self.mcp:self.mcp.require_browser_fallback(x['url'])
+        result=self.browser.navigate(x['url'],t)
+        if self.mcp:self.mcp.require_browser_fallback(result.get('url',x['url']))
+        return result
 
     def browser_inspect(self,x,t):
         if not self.browser:raise RuntimeError('Browser control unavailable.')
-        return self.browser.inspect(t)
+        if self.mcp:self.browser.set_url_guard(self.mcp.require_browser_fallback)
+        result=self.browser.inspect(t)
+        if self.mcp:self.mcp.require_browser_fallback(result.get('url',''))
+        return result
 
     def browser_action(self,x,t):
         if not self.browser:raise RuntimeError('Browser control unavailable.')
-        return self.browser.action(x,t)
+        if self.mcp:self.browser_inspect({},t)
+        result=self.browser.action(x,t)
+        if self.mcp:self.mcp.require_browser_fallback(result.get('observation',{}).get('url',''))
+        return result
+
+    def mcp_required(self):
+        if not self.mcp:raise RuntimeError('App connections are unavailable in this installation. Ask IT to check Connected apps.')
+        return self.mcp
+
+    def mcp_servers(self,x,t):
+        from .mcp_catalog import CATALOG,consumer_available
+        return {'connections':self.mcp_required().servers(),
+                'catalog':[{'name':c['name'],'domains':c['domains'],'consumer_sign_in_available':consumer_available(c,self.mcp_required().registrations)} for c in CATALOG],
+                'setup':'Use Connect apps. Unavailable integrations need product development, not customer OAuth or server configuration.'}
+
+    def mcp_tools(self,x,t):
+        tools=self.mcp_required().tools(x['server'],t)
+        terms=x.get('query','').casefold().split()
+        matches=[v for v in tools if all(q in (v['name']+' '+v.get('description','')).casefold() for q in terms)]
+        offset=max(0,x.get('offset',0))
+        return {'tools':matches[offset:offset+20],'total':len(matches),
+                'next_offset':offset+20 if offset+20<len(matches) else None}
+
+    def mcp_call(self,x,t):
+        return self.mcp_required().call(x['server'],x['name'],x['arguments'],t)
 
     def comfyui_run(self,x,t):
         source=self.files.read(x['workflow_path'])

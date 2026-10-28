@@ -13,6 +13,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Graphene', '1.0')
 from gi.repository import Gtk, GLib, Graphene
 from desktop_buddy.ui import BuddyApp, content
+from desktop_buddy.state import PROVIDERS
 
 release = threading.Event()
 entered = threading.Event()
@@ -107,10 +108,20 @@ def capture(window, filename):
 
 
 def pick(model, pid):
-    picker = app.model_dialog().controller
-    row = next(r for r in picker.rows if r.config.model == model and r.config.id == pid)
-    picker.list.select_row(row)
-    return picker
+    app.model_dialog()
+    picker = app.model_menu
+    row = picker.box.get_first_child()
+    while row:
+        if isinstance(row, Gtk.CheckButton):
+            words = row.get_child()
+            title = words.get_first_child()
+            hint = title.get_next_sibling()
+            if title.get_text() == model and hint.get_text().startswith(PROVIDERS[pid][0]+' ·'):
+                row.set_active(True)
+                picker.popover.popdown()
+                return picker
+        row = row.get_next_sibling()
+    raise AssertionError(f'Model menu did not contain {pid}/{model}')
 
 
 def choose_discovered(dialog, model):
@@ -174,8 +185,7 @@ def tick():
             assert app.store.configs()['openai'].model == 'model-a'
             assert app.store.configs()['openai'].reasoning == 'high'
             assert app.selected_id() == 'openai'
-            assert 'model-a' in app.model_label.get_text()
-            assert app.thinking_values[app.thinking_selector.get_selected()] == 'high'
+            assert app.model_menu.title.get_text() == 'model-a · High thinking'
             result['visible_thinking_level_persisted'] = True
             cid = app.cid
             app.input.get_buffer().set_text('First message')
@@ -204,13 +214,10 @@ def tick():
             picker = pick('model-b','lmstudio')
             phase = 9
         elif phase == 9:
-            picker.search.set_text('no-such-model')
-            assert not any(r.get_visible() for r in picker.rows)
-            picker.search.set_text('MODEL-B')
-            assert [r.config.model for r in picker.rows if r.get_visible()] == ['model-b']
-            result['saved_model_picker_search'] = True
-            capture(picker.window,'picker.png')
-            picker.use.emit('clicked')
+            assert app.selected_id() == 'lmstudio'
+            assert 'model-b' in picker.title.get_text()
+            result['saved_model_menu_selection'] = True
+            capture(app.window,'picker.png')
             assert app.cid == cid
             assert content(app.input) == 'Keep this draft'
             assert len(app.store.messages(cid)) == 2
@@ -229,8 +236,6 @@ def tick():
             phase = 11
         elif phase == 11 and entered.is_set():
             picker = pick('model-a','openai')
-            assert picker.use.get_label() == 'Use for next message'
-            picker.use.emit('clicked')
             assert app.agent.provider.config.id == 'lmstudio'
             assert app.selected_id() == 'openai'
             assert 'next message' in app.model_hint.get_text()
@@ -250,13 +255,14 @@ def tick():
             app.send('Hold response again')
             phase = 14
         elif phase == 14 and entered.is_set():
-            picker = pick('model-b','lmstudio')
-            picker.stop_switch.emit('clicked')
+            app.cancel_button.emit('clicked')
             phase = 15
-        elif phase == 15 and finished() and app.selected_id() == 'lmstudio':
+        elif phase == 15 and finished():
             assert app.store.tasks(cid)[0]['status'] == 'cancelled'
+            pick('model-b','lmstudio')
+            assert app.selected_id() == 'lmstudio'
             assert app.cid == cid
-            result['stop_and_switch_cancels_before_switching'] = True
+            result['stop_then_menu_switch_preserves_conversation'] = True
             release.set()
             setup = app.providers_dialog().controller
             setup.fields['base_url'].set_text(url+'/slow')
@@ -279,6 +285,22 @@ def tick():
             setup.close()
             assert app.window.get_width() <= 960
             result['compact_window'] = [app.window.get_width(),app.window.get_height()]
+            setup = app.providers_dialog().controller
+            setup.provider.set_selected(app.provider_ids.index('anthropic'))
+            setup.model.set_text('fixture-claude')
+            for level in ('1024','4096','8192','16384','32768'):
+                setup.fields['max_output'].set_text('4096')
+                setup.thinking.set_selected(setup.thinking.values.index(level))
+                config = setup.config()
+                assert config.max_output > int(level)
+                assert int(setup.fields['max_output'].get_text()) == config.max_output
+            setup.use_button.emit('clicked')
+            phase = 18
+        elif phase == 18 and setup.closed:
+            config = app.store.configs()['anthropic']
+            assert config.reasoning == '32768' and config.max_output > 32768
+            assert app.model_menu.title.get_text() == 'fixture-claude · Maximum thinking'
+            result['anthropic_setup_thinking_limits_and_save'] = True
             result['passed'] = True
             app.quit()
             return False

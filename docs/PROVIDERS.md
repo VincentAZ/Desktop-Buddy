@@ -2,6 +2,8 @@
 
 # Provider setup
 
+Desktop Buddy runs locally and requires no Buddy account, registration or sign-in. IT connects it directly to an existing local model or a cloud endpoint through **Settings → IT setup**. Leave the API key blank when the endpoint requires none; the endpoint decides whether credentials are needed. Service permissions for connected apps are separate from model setup.
+
 All providers are configured through the application. Never paste API keys into chat, source files, shell arguments or Git. Keys are stored through libsecret in GNOME Keyring. There is no plaintext fallback. An optional local-server API key can also be saved in the keyring.
 
 | Provider | Default base URL | Default protocol | Discovery |

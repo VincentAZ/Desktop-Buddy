@@ -188,10 +188,15 @@ class Store:
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,title TEXT,created REAL);
         CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,conversation TEXT,body TEXT,created REAL);
+        CREATE TABLE IF NOT EXISTS queued_messages(id INTEGER PRIMARY KEY,conversation TEXT,body TEXT,created REAL);
         CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,conversation TEXT,status TEXT,checkpoint TEXT,updated REAL);
         CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,task TEXT,event TEXT,body TEXT,created REAL);
         ''')
         self.db.execute("UPDATE tasks SET status='interrupted' WHERE status IN ('running','waiting')")
+        # Recover acknowledged messages after a crash. Tool-history repair will
+        # mark any interrupted effects before these follow-up user messages.
+        self.db.execute('INSERT INTO messages(conversation,body,created) SELECT conversation,body,created FROM queued_messages ORDER BY id')
+        self.db.execute('DELETE FROM queued_messages')
         self.db.commit()
         # Version 1 stored "not checked" as False. It must not mean unsupported.
         if self.get('capability_schema', 1) < 2:
@@ -263,13 +268,14 @@ class Store:
                 raise ValueError('Conversation no longer exists.')
 
     def delete_conversation(self, cid):
-        """Remove a transcript and its private, exclusively referenced image artifacts."""
+        """Remove a transcript and its private, exclusively referenced attachments."""
         with self.lock:
             image_paths=set()
-            for row in self.db.execute('SELECT body FROM messages WHERE conversation=?',(cid,)):
+            for row in self.db.execute('SELECT body FROM messages WHERE conversation=? UNION ALL SELECT body FROM queued_messages WHERE conversation=?',(cid,cid)):
                 try:
                     body=json.loads(row[0])
                     image_paths.update(x for x in body.get('images',[]) if isinstance(x,str))
+                    image_paths.update(x['path'] for x in body.get('files',[]) if isinstance(x,dict) and isinstance(x.get('path'),str))
                 except (ValueError,TypeError):pass
             with self.db:
                 if self.db.execute("SELECT 1 FROM tasks WHERE conversation=? AND status IN ('running','waiting')", (cid,)).fetchone():
@@ -277,21 +283,24 @@ class Store:
                 self.db.execute('DELETE FROM audit WHERE task IN (SELECT id FROM tasks WHERE conversation=?)', (cid,))
                 self.db.execute('DELETE FROM tasks WHERE conversation=?', (cid,))
                 self.db.execute('DELETE FROM messages WHERE conversation=?', (cid,))
+                self.db.execute('DELETE FROM queued_messages WHERE conversation=?', (cid,))
                 self.db.execute('DELETE FROM conversations WHERE id=?', (cid,))
                 drafts=self.get('drafts',{});drafts.pop(cid,None);self.set('drafts',drafts)
             # Secure-delete overwrites freed cells; truncate the WAL so deleted
             # transcript pages are not retained in the active profile files.
             self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
             remaining=set()
-            for row in self.db.execute('SELECT body FROM messages'):
+            for row in self.db.execute('SELECT body FROM messages UNION ALL SELECT body FROM queued_messages'):
                 try:
                     body=json.loads(row[0]);remaining.update(x for x in body.get('images',[]) if isinstance(x,str))
+                    remaining.update(x['path'] for x in body.get('files',[]) if isinstance(x,dict) and isinstance(x.get('path'),str))
                 except (ValueError,TypeError):pass
             remaining_resolved=set()
             for raw in remaining:
                 try:remaining_resolved.add(Path(raw).resolve())
                 except OSError:pass
-            deleted=[];allowed=[(self.root/'images').resolve(),(self.root/'screenshots').resolve()]
+            deleted=[];allowed=[self.root/'images',self.root/'screenshots',self.root/'attachments']
+            allowed=[p for p in allowed if not p.is_symlink()]
             for raw in image_paths:
                 path=Path(raw)
                 try:resolved=path.resolve(strict=True)
@@ -300,6 +309,9 @@ class Store:
                 if not any(resolved.is_relative_to(folder) for folder in allowed):continue
                 try:resolved.unlink();deleted.append(str(resolved))
                 except OSError:pass
+                if resolved.is_relative_to(self.root/'attachments'):
+                    try:resolved.parent.rmdir()
+                    except OSError:pass
             return {'deleted_images':deleted}
 
     def add_message(self,cid,message):
@@ -311,6 +323,19 @@ class Store:
     def messages(self,cid):
         with self.lock:
             return [json.loads(r[0]) for r in self.db.execute('SELECT body FROM messages WHERE conversation=? ORDER BY id',(cid,))]
+
+    def queue_message(self,cid,message):
+        """Durably accept a follow-up without splitting a tool exchange."""
+        with self.lock,self.db:
+            return self.db.execute('INSERT INTO queued_messages(conversation,body,created) VALUES (?,?,?)',
+                (cid,json.dumps(self.redactor.clean(message)),time.time())).lastrowid
+
+    def deliver_queued_messages(self,idents):
+        """Move accepted messages into the transcript exactly once, in order."""
+        with self.lock,self.db:
+            for ident in idents:
+                self.db.execute('INSERT INTO messages(conversation,body,created) SELECT conversation,body,created FROM queued_messages WHERE id=?',(ident,))
+                self.db.execute('DELETE FROM queued_messages WHERE id=?',(ident,))
 
     def task(self,cid,checkpoint):
         tid=uuid.uuid4().hex

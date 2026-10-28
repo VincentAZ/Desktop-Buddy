@@ -9,7 +9,7 @@ import gi
 from . import __version__
 
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, Pango
+from gi.repository import GLib, Gtk, Pango
 
 
 CSS = '''
@@ -41,6 +41,8 @@ entry, searchentry { padding: 6px 8px; }
 .message-body { font-size: 16px; line-height: 1.4; }
 .user-message { background: #e9eee4; border-radius: 18px; padding: 18px 22px; margin-left: 48px; }
 .message-author { font-size: 12px; font-weight: 700; color: #42604b; }
+button.copy-message { min-height: 22px; min-width: 22px; padding: 2px; opacity: .55; }
+button.copy-message:hover { opacity: 1; }
 .tool-card { border: 1px solid #dce2d6; border-radius: 12px; padding: 12px 16px; background: #f1f3ed; }
 .tool-card label { font-size: 13px; }
 .error-card { border-color: #d8afa0; background: #fff1e9; color: #6c392d; }
@@ -77,6 +79,10 @@ checkbutton.menu-choice { padding: 6px 4px; border-radius: 8px; }
 checkbutton.menu-choice:hover { background: #eef2e9; }
 checkbutton.menu-choice:checked { background: #e1e9d9; }
 '''
+
+
+MODE_TITLES = ['Discuss only', 'Ask before acting', 'Just do it']
+MODE_IDS = ['plan', 'execute', 'yolo']
 
 
 def label(text='', css=None, **kwargs):
@@ -140,10 +146,10 @@ def build_workspace(app, providers, text_view, default_workspace):
     header = Gtk.HeaderBar()
     title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER)
     title.append(label('Desktop Buddy', 'conversation-title'))
-    title.append(label('v' + __version__, 'status'))
     header.set_title_widget(title)
-    history_toggle = button('History', lambda *_: app.sidebar.set_visible(not app.sidebar.get_visible()), icon='sidebar-show-symbolic')
+    history_toggle = button('Conversations', lambda *_: app.sidebar.set_visible(not app.sidebar.get_visible()), icon='sidebar-show-symbolic')
     header.pack_start(history_toggle)
+    header.pack_start(button('Connect apps', lambda *_: app.mcp_dialog(), icon='network-server-symbolic'))
     app.stop_button = button('Stop everything', lambda *_: app.emergency('the Stop everything button'), 'flat')
     app.stop_button.add_css_class('stop-button')
     app.stop_button.set_tooltip_text('Stop actions and disconnect computer control · Ctrl+Shift+Escape')
@@ -165,11 +171,13 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.history = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
     app.history.connect('row-selected', app.select_history)
     sidebar.append(scroller(app.history))
-    app.desktop_button = button('Desktop control', lambda *_: app.connect_desktop(), icon='video-display-symbolic')
+    app.desktop_button = button('Computer access', lambda *_: app.connect_desktop(), icon='video-display-symbolic')
     sidebar.append(app.desktop_button)
+    sidebar.append(button('Work folder', lambda *_: app.open_work_folder(), icon='folder-open-symbolic'))
     sidebar.append(button('Things to remember', lambda *_: app.memory_dialog(), icon='document-properties-symbolic'))
-    sidebar.append(button('Activity details', lambda *_: app.audit_dialog(), icon='document-open-recent-symbolic'))
-    sidebar.append(button('Settings', lambda *_: app.providers_dialog(), icon='emblem-system-symbolic'))
+    sidebar.append(button('Recent activity', lambda *_: app.audit_dialog(), icon='document-open-recent-symbolic'))
+    sidebar.append(button('Settings', lambda *_: app.settings_dialog(), icon='emblem-system-symbolic'))
+    sidebar.append(button('Connected apps', lambda *_: app.mcp_dialog(), icon='network-server-symbolic'))
 
     main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
     root.append(main)
@@ -187,9 +195,16 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.selector.connect('notify::selected', app.provider_changed)
     from .model_ui import ModelMenu
     app.model_menu = ModelMenu(app)
-    toolbar.append(app.model_menu.button)
+    app.assistant_status=label('', 'muted',ellipsize=Pango.EllipsizeMode.END)
+    app.assistant_status.set_max_width_chars(24)
+    app.assistant_status.set_tooltip_text('Your assistant is set up by IT. Open Settings for details.')
+    toolbar.append(app.assistant_status)
+    toolbar.append(icon_button('emblem-system-symbolic','Settings',lambda *_:app.settings_dialog()))
     toolbar.append(menu_button('view-more-symbolic', 'Conversation options', [
         ('Rename conversation', app.rename_conversation_dialog),
+        ('Copy whole conversation', app.copy_conversation),
+        ('Copy only my messages', lambda: app.copy_conversation('user')),
+        ('Copy only Buddy’s replies', lambda: app.copy_conversation('assistant')),
         ('Continue unfinished task', app.resume),
         ('Delete conversation…', app.delete_conversation_dialog),
     ]))
@@ -219,7 +234,13 @@ def build_workspace(app, providers, text_view, default_workspace):
         pinned['end'] = away < 120
         app.jump_button.set_visible(away > 120)
     def content_changed(*_):
-        if pinned['end']:adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+        if pinned['end']:
+            adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+            # This signal fires during the viewport's own layout pass, and a
+            # value set here is recorded but not always applied to that pass: the
+            # scrollbar then reads "at the end" while the newest card stays below
+            # the fold. Re-run the layout once this pass is over so it lands.
+            GLib.idle_add(lambda: pinned['end'] and app.scroll_end())
         update_jump()
     adjustment.connect('value-changed', update_jump)
     adjustment.connect('changed', content_changed)
@@ -243,7 +264,7 @@ def build_workspace(app, providers, text_view, default_workspace):
     status_row = Gtk.Box(spacing=8)
     app.spinner = Gtk.Spinner()
     status_row.append(app.spinner)
-    app.status = label('Ready when you are', 'status', ellipsize=Pango.EllipsizeMode.END)
+    app.status = label('Ready when you are', 'status', wrap=True, lines=3, ellipsize=Pango.EllipsizeMode.END)
     app.status.set_hexpand(True)
     status_row.append(app.status)
     app.recovery_button = button('Continue task', lambda *_: app.resume())
@@ -268,35 +289,33 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.input.get_buffer().connect('changed', lambda b: placeholder.set_visible(b.get_char_count() == 0))
     overlay.add_overlay(placeholder)
     composer.append(overlay)
-    app.attachments = Gtk.Box(spacing=8)
+    app.attachments = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE,column_spacing=8,row_spacing=8,max_children_per_line=4,min_children_per_line=1)
     app.attachments.set_visible(False)
     composer.append(app.attachments)
     keys = Gtk.EventControllerKey()
     keys.connect('key-pressed', app.input_key)
     app.input.add_controller(keys)
     controls = Gtk.Box(spacing=8)
-    app.mode = Gtk.DropDown.new_from_strings(['Just discuss', 'Help me do it', 'YOLO — do anything'])
+    app.mode = Gtk.DropDown.new_from_strings(MODE_TITLES)
     app.mode.update_property([Gtk.AccessibleProperty.LABEL], ['How Buddy can help'])
     saved_mode = app.store.get('mode', 'execute')
     app.mode.set_selected({'plan': 0, 'execute': 1, 'yolo': 2}.get(saved_mode, 1))
-    app.mode.set_tooltip_text('Just discuss: no changes. Help me do it: asks before sensitive actions. YOLO: commands, files, apps and online requests without approval prompts. Offline settings and Linux permissions still apply.')
+    app.mode.set_tooltip_text('Discuss only: Buddy reads and explains, changes nothing. Ask before acting: Buddy works in its work folder and asks you before anything else. Just do it: Buddy acts without asking. Stop always works.')
     app.mode.connect('notify::selected', app.mode_changed)
     controls.append(app.mode)
-    controls.append(icon_button('mail-attachment-symbolic', 'Attach an image', lambda *_: app.choose_image()))
-    options = Gtk.MenuButton(icon_name='emblem-system-symbolic')
-    options.set_tooltip_text('Task options')
-    options.update_property([Gtk.AccessibleProperty.LABEL], ['Task options'])
+    controls.append(icon_button('mail-attachment-symbolic', 'Attach a file', lambda *_: app.choose_image()))
+    options = Gtk.MenuButton(icon_name='video-display-symbolic')
+    options.set_tooltip_text('Computer and work folder')
+    options.update_property([Gtk.AccessibleProperty.LABEL], ['Computer and work folder'])
     options.add_css_class('flat')
     pop = Gtk.Popover()
     settings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     settings.set_size_request(320, -1)
-    settings.append(label('Task options', 'step-title'))
+    settings.append(label('Your computer', 'step-title'))
     app.local = Gtk.CheckButton(label='Keep Buddy offline')
     app.local.set_active(app.store.get('local_only', True))
-    app.local.set_tooltip_text('Use a local model and block Buddy’s network tools. Other apps may still connect.')
+    app.local.set_tooltip_text('Use a trusted local model. Block network tools, app launch and desktop input; isolate shell networking. Observation and workspace file tools remain available.')
     app.local.connect('toggled', app.local_changed)
-    settings.append(app.local)
-    settings.append(label('Folder Buddy can work in', 'muted'))
     saved_workspace = app.store.get('workspace', str(default_workspace))
     if not Path(saved_workspace).expanduser().is_dir():
         # The saved folder was moved or deleted (for example a renamed checkout).
@@ -307,14 +326,10 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.workspace = Gtk.Entry(text=saved_workspace)
     app.workspace.update_property([Gtk.AccessibleProperty.LABEL], ['Working folder'])
     app.workspace.connect('activate', lambda *_: (app.save_preferences(), pop.popdown()))
-    settings.append(app.workspace)
-    settings.append(button('Choose folder…', lambda *_: app.choose_workspace(pop)))
-    settings.append(Gtk.Separator())
-    settings.append(button('Connect computer control', lambda *_: (pop.popdown(), app.connect_desktop())))
+    settings.append(button('Open work folder', lambda *_: (pop.popdown(), app.open_work_folder())))
+    settings.append(button('Let Buddy use my computer', lambda *_: (pop.popdown(), app.connect_desktop())))
     settings.append(button('Take a screenshot', lambda *_: (pop.popdown(), app.observe())))
-    settings.append(button('Connection settings', lambda *_: (pop.popdown(), app.providers_dialog())))
     app.usage = label('', 'status', wrap=True)
-    settings.append(app.usage)
     pop.set_child(settings)
     options.set_popover(pop)
     controls.append(options)
@@ -358,14 +373,15 @@ def welcome(app):
     mark.add_css_class('welcome-mark')
     app.welcome_mark = mark
     box.append(mark)
-    box.append(label('What can I help you with?', 'welcome-title', wrap=True))
-    box.append(label('Tell me what you need. We’ll take it one step at a time.', 'welcome-subtitle', wrap=True))
-    if not app.store.configs()[app.selected_id()].model:
+    configured=bool(app.store.configs()[app.selected_id()].model)
+    box.append(label('What can I help you with?' if configured else 'Welcome to Desktop Buddy', 'welcome-title', wrap=True))
+    box.append(label('Describe the result you want. You can review the work and stop Buddy at any time.' if configured else 'One step before we start: choose which AI service Buddy should use.', 'welcome-subtitle', wrap=True))
+    if not configured:
         setup = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         setup.add_css_class('settings-section')
-        setup.append(label('Let’s connect your assistant', 'step-title'))
-        setup.append(label('Choose the AI service you use. You only need to set this up once.', 'muted', wrap=True))
-        connect = button('Set up Buddy', lambda *_: app.providers_dialog(), 'suggested-action')
+        setup.append(label('Choose an assistant', 'step-title'))
+        setup.append(label('Pick a service such as OpenAI, Anthropic, or a model running on this computer, and enter its key if it needs one. This is usually done once by whoever set up this computer.', 'muted', wrap=True))
+        connect = button('Set up the assistant', lambda *_: app.model_dialog(), 'suggested-action')
         connect.set_halign(Gtk.Align.START)
         setup.append(connect)
         box.append(setup)
@@ -375,7 +391,7 @@ def welcome(app):
         box.append(ideas)
         for title, description, prompt, icon in [
             ('Make sense of my files', 'Find what matters in a folder', 'Help me understand and organize the files in my working folder. Show me a plan before moving anything.', 'folder-documents-symbolic'),
-            ('Help with an app', 'Get something working on my computer', 'I need help setting up an app on my computer. Ask me which app and what I want to do.', 'preferences-desktop-apps-symbolic'),
+            ('Use my apps', 'Do something in an app on this computer', 'Help me with a task in one of my apps. Ask which app, what I want to achieve, and what must stay unchanged.', 'preferences-desktop-apps-symbolic'),
             ('Think it through', 'Turn a to-do into a clear next step', 'Help me break a task into manageable steps. Ask me what I am trying to accomplish.', 'dialog-information-symbolic'),
         ]:
             def choose(_button, text=prompt):
@@ -420,12 +436,23 @@ def message_markup(text):
     return '\n'.join(output)
 
 
-def message_card(who, text):
+def message_card(who, text, on_copy=None):
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     box.add_css_class('message')
     if who in ('YOU', 'USER'):
         box.add_css_class('user-message')
-    box.append(label('You' if who in ('YOU', 'USER') else 'Desktop Buddy', 'message-author'))
+    author = label('You' if who in ('YOU', 'USER') else 'Desktop Buddy', 'message-author')
+    if on_copy is None:
+        box.append(author)
+    else:
+        heading = Gtk.Box(spacing=6)
+        author.set_hexpand(True)
+        author.set_valign(Gtk.Align.CENTER)
+        heading.append(author)
+        copy = icon_button('edit-copy-symbolic', 'Copy this message', lambda *_: on_copy(text))
+        copy.add_css_class('copy-message')
+        heading.append(copy)
+        box.append(heading)
     body = label(text, 'message-body', wrap=True, selectable=True)
     if who not in ('YOU','USER'):body.set_markup(message_markup(text))
     body.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -434,48 +461,18 @@ def message_card(who, text):
 
 
 def activity_card(who, text):
+    from .experience import activity_summary
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     box.add_css_class('tool-card')
-    if who == 'ERROR':
-        box.add_css_class('error-card')
-    title = {'TOOL': 'Running action', 'TOOLS': 'Requested actions', 'RESULT': 'Action result', 'ERROR': 'Action needs attention'}.get(who, 'Action result')
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            name = data.get('name') or data.get('tool')
-            args = data.get('arguments', {})
-            if name == 'run_tool' and isinstance(args, dict):
-                name = args.get('name', name)
-                args = args.get('arguments', {})
-            readable = {'fs.write': 'Write file', 'fs.read': 'Read file',
-                'fs.list': 'List files', 'shell.run': 'Run command',
-                'desktop.screenshot': 'Observe desktop', 'desktop.input': 'Desktop input',
-                'browser.navigate': 'Open a web page', 'discover_tools': 'Choose the next step',
-                'fs.search': 'Find files', 'fs.move': 'Move a file', 'fs.mkdir': 'Create a folder',
-                'fs.delete': 'Delete a file', 'fs.image': 'Look at an image',
-                'system.inspect': 'Check this computer', 'task.checkpoint': 'Save progress',
-                'skills.list': 'Find instructions', 'skills.load': 'Read instructions',
-                'memory.read': 'Read your preferences', 'memory.set': 'Remember a preference',
-                'http.request': 'Contact a website', 'desktop.accessibility': 'Look at open apps',
-                'desktop.accessible_action': 'Use an app', 'desktop.window': 'Arrange a window',
-                'desktop.clipboard_read': 'Read the clipboard', 'desktop.clipboard_write': 'Copy to clipboard',
-                'app.launch': 'Open an app', 'browser.inspect': 'Read a web page',
-                'browser.action': 'Use a web page', 'comfyui.status': 'Check image creation',
-                'comfyui.run': 'Create images', 'comfyui.run_batch': 'Create a batch of images',
-                'comfyui.cancel': 'Stop image creation'}
-            title = readable.get(name, name or title)
-            if isinstance(args, dict):
-                target = args.get('path') or args.get('url')
-                if target:title += ' · ' + str(target)[:80]
-    except (ValueError, TypeError):
-        pass
-    expander = Gtk.Expander(label=title)
-    detail = label(text, 'muted', wrap=True, selectable=True)
-    detail.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    detail.set_margin_top(10)
-    expander.set_child(detail)
-    expander.set_expanded(who == 'ERROR')
-    box.append(expander)
+    if who == 'ERROR':box.add_css_class('error-card')
+    title, explanation = activity_summary(who,text)
+    box.append(label(title,'step-title',wrap=True))
+    detail=label(explanation,'muted',wrap=True,selectable=True)
+    detail.set_wrap_mode(Pango.WrapMode.WORD_CHAR);box.append(detail)
+    expander=Gtk.Expander(label='Technical details')
+    raw=label(text,'muted',wrap=True,selectable=True)
+    raw.set_wrap_mode(Pango.WrapMode.WORD_CHAR);raw.set_margin_top(10)
+    expander.set_child(raw);box.append(expander)
     return box
 
 

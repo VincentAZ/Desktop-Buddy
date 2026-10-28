@@ -103,6 +103,13 @@ def tick():
             app.store.checkpoint(task, cid, 'complete', {})
             phase = 12
         elif phase == 12:
+            # The newest card must sit above the fold without anyone scrolling:
+            # the scrollbar saying "at the end" is not enough (v0.4.2 regression).
+            last = app.transcript.get_last_child()
+            while last and not last.get_visible():last = last.get_prev_sibling()
+            bounds = last.compute_bounds(app.transcript_scroll)[1]
+            assert bounds.get_y() + bounds.get_height() <= app.transcript_scroll.get_height(), (bounds.get_y(), bounds.get_height(), app.transcript_scroll.get_height())
+            result['newest_message_visible_without_scrolling'] = True
             # The compositor may not offer a fresh main-window snapshot after
             # closing a modal. Verify the history image widget above regardless;
             # dedicated foreground renders cover its visual presentation.
@@ -140,7 +147,7 @@ def tick():
             phase = 5
         elif phase == 5:
             dialog = app.memory_dialog()
-            click(dialog, 'Add memory')
+            click(dialog, 'Add a preference')
             next(w for w in widgets(dialog) if isinstance(w, Gtk.Entry)).set_text('preferred_editor')
             next(w for w in widgets(dialog) if isinstance(w, Gtk.TextView)).get_buffer().set_text('Cursor')
             phase = 6

@@ -3,54 +3,15 @@ import argparse
 import json
 import os
 from pathlib import Path
-import platform
 import shutil
-import socket
-import stat
 import subprocess
 import sys
 
 
-def local_port(port):
-    try:
-        with socket.create_connection(('127.0.0.1', port), timeout=.25):
-            return True
-    except OSError:
-        return False
-
-
-def gpu_info():
-    executable=shutil.which('nvidia-smi')
-    if not executable:return []
-    try:
-        result=subprocess.run([executable,'--query-gpu=name,memory.total,driver_version','--format=csv,noheader,nounits'],
-            stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=3,check=True)
-        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    except (OSError,subprocess.SubprocessError):
-        return []
-
 def doctor():
-    import importlib.util
-    info={'os':platform.platform(),'python':platform.python_version(),'desktop':os.environ.get('XDG_CURRENT_DESKTOP'),
-        'session':os.environ.get('XDG_SESSION_TYPE'),'display':os.environ.get('WAYLAND_DISPLAY') or os.environ.get('DISPLAY'),
-        'own_app_scope':in_own_scope(),
-        'dependencies':{n:bool(importlib.util.find_spec(n)) for n in ['requests','gi','PIL']},
-        'commands':{n:shutil.which(n) for n in ['bwrap','google-chrome','chromium','ollama','lms','docker','cursor','ptyxis','nvidia-smi','xdotool','wmctrl']},
-        'local_services':{'lm_studio_1234':local_port(1234),'ollama_11434':local_port(11434),'comfyui_8188':local_port(8188)},
-        'gpus':gpu_info()}
-    docker_socket=Path('/var/run/docker.sock')
-    if docker_socket.exists():
-        mode=docker_socket.stat().st_mode
-        info['docker_socket']={'path':str(docker_socket),'mode':stat.filemode(mode),
-            'read_write_access':os.access(docker_socket,os.R_OK|os.W_OK)}
-    try:
-        import gi
-        from gi.repository import Gio
-        bus=Gio.bus_get_sync(Gio.BusType.SESSION,None)
-        result=bus.call_sync('org.freedesktop.portal.Desktop','/org/freedesktop/portal/desktop','org.freedesktop.DBus.Properties','GetAll',
-            __import__('gi.repository',fromlist=['GLib']).GLib.Variant('(s)',('org.freedesktop.portal.RemoteDesktop',)),None,Gio.DBusCallFlags.NONE,3000,None)
-        info['remote_desktop_portal']=result.unpack()[0]
-    except Exception as e:info['portal_error']=str(e)
+    from .diagnostics import collect
+    info=collect()
+    info['own_app_scope']=in_own_scope()
     print(json.dumps(info,indent=2))
 
 APP_ID='io.desktopbuddy.App'
@@ -92,8 +53,11 @@ def main():
     if os.geteuid()==0:parser.error('Desktop Buddy refuses to run as root. Use your ordinary desktop account.')
     if args.doctor:doctor();return
     enter_own_scope(sys.argv[1:])
-    from .ui import BuddyApp
+    from .ui import BuddyApp,Gdk
+    if Gdk.Display.get_default() is None:
+        parser.exit(2,'Desktop Buddy cannot access a desktop display. Launch from a terminal in your unlocked GNOME session. Use --doctor for read-only diagnostics.\n')
     app=BuddyApp(args.data_dir,args.smoke_test)
-    raise SystemExit(app.run([]))
+    code=app.run([])
+    raise SystemExit(1 if getattr(app,'startup_error',None) else code)
 
 if __name__=='__main__':main()

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Use Buddy's real AT-SPI backend against a dedicated harmless GTK window."""
 import json
+import os
 from pathlib import Path
 import sys
 import threading
@@ -17,7 +18,7 @@ root.mkdir(parents=True, exist_ok=True)
 result = {}
 changed = threading.Event()
 app = Gtk.Application(application_id='io.desktopbuddy.AccessibilityCheck', flags=Gio.ApplicationFlags.NON_UNIQUE)
-title = 'Desktop Buddy — accessibility control check'
+title = f'Desktop Buddy — accessibility control check {os.getpid()}'
 
 
 def worker():
@@ -26,7 +27,7 @@ def worker():
         deadline = time.monotonic() + 10
         button_node = None
         while time.monotonic() < deadline:
-            tree = backend.inspect(app='python3', window=title, depth=10, limit=500)
+            tree = backend.inspect(window=title, depth=10, limit=500)
             button_node = next((node for node in tree['nodes'] if node.get('name') == 'Set verification result' and node.get('actions')), None)
             if button_node:break
             time.sleep(.2)
@@ -35,7 +36,7 @@ def worker():
         invoked = backend.act(button_node['path'], action, 'Set verification result')
         if not invoked['accepted']:raise AssertionError('AT-SPI rejected the action')
         if not changed.wait(3):raise AssertionError('GTK callback did not run')
-        observed = backend.inspect(app='python3', window=title, depth=10, limit=500)
+        observed = backend.inspect(window=title, depth=10, limit=500)
         if not any(node.get('name') == 'Accessibility action verified' for node in observed['nodes']):
             raise AssertionError('Changed UI state was not observable through AT-SPI')
         result.update({'button_path':button_node['path'],'available_actions':button_node['actions'],

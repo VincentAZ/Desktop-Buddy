@@ -8,3 +8,4 @@ docs/research/
 workspace/
 build/
 dist/
+desktop_buddy/publisher_local.py

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from desktop_buddy.browser import Browser
@@ -25,7 +26,9 @@ class Page(BaseHTTPRequestHandler):
   body=b'''<!doctype html><title>Desktop Buddy safe test</title><h1>Local acceptance form</h1><input id="note"><button id="save" onclick="document.getElementById('result').textContent=document.getElementById('note').value">Preview</button><p id="result"></p>'''
   self.send_response(200);self.send_header('Content-Length',str(len(body)));self.send_header('Content-Type','text/html');self.end_headers();self.wfile.write(body)
 
-root=Path(__file__).resolve().parents[1]/'.test-data'/'physical-workflow';root.mkdir(parents=True,exist_ok=True)
+parent=Path(__file__).resolve().parents[1]/'.test-data'/'physical-workflow';parent.mkdir(parents=True,exist_ok=True)
+# A fresh run cannot pass using an old terminal readback or report.
+root=Path(tempfile.mkdtemp(prefix='run-',dir=parent))
 store=Store(root/'state',Redactor());policy=Policy(root,'execute',False,lambda *_:True,protected=[store.root])
 # The test's fixed operations above/below are explicitly authorized safe test data.
 browser=Browser(root/'chrome');registry=Registry(policy,store,browser=browser);token=StopToken()
@@ -47,7 +50,7 @@ try:
  deadline=time.monotonic()+8
  while time.monotonic()<deadline and not (root/'terminal-readback.txt').exists():time.sleep(.1)
  assert (root/'terminal-readback.txt').read_text()==(root/'workflow-report.txt').read_text()
- evidence={'browser_title':page['title'],'browser_form_verified':True,'missing_selector_recovered':True,'file_sha256':written['sha256'],'terminal_readback_matches':True,'model_driven':False}
+ evidence={'run_directory':str(root),'browser_title':page['title'],'browser_form_verified':True,'missing_selector_recovered':True,'file_sha256':written['sha256'],'terminal_readback_matches':True,'model_driven':False}
  (root/'result.json').write_text(json.dumps(evidence,indent=2));print(json.dumps(evidence,indent=2))
 finally:
  if terminal:
