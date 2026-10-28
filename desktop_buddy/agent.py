@@ -187,6 +187,16 @@ class UnverifiedSourceError(RuntimeError):
     pass
 
 
+def counts_as_refusal(operation,failure_type):
+    """Whether a failed step should be reported to the person if it is never settled.
+
+    Command exit codes are information the model reads (grep finding nothing,
+    ls of a missing folder), not a failed task; a person declining a step is
+    their own decision; a blocked change is already covered by the failed read.
+    """
+    return operation!='shell.run' and failure_type not in ('Denied','UnverifiedSourceError')
+
+
 def failure_reason(result):
     """The plain text a failed tool result carries, if any (untrusted; shown quoted)."""
     if not isinstance(result,dict):return ''
@@ -326,11 +336,10 @@ class Agent:
         if files:user_message['files']=list(files)
         if not user_saved:self.store.add_message(cid,user_message)
         status='failed';unresolved={};source_failures={}
-        if resume:
-            for identity in restored.get('unresolved_operations',[]):
-                try:unresolved[identity]=json.loads(identity)[0]
-                except (ValueError,TypeError,IndexError):continue
-            source_failures=restored.get('source_failures',{})
+        # A continued task carries forward only failed reads: they still block
+        # derived content and are retried first. Refused actions belonged to the
+        # earlier attempt; carrying them forward made every continuation "fail" again.
+        if resume:source_failures=restored.get('source_failures',{})
         self.registry.source_failures=source_failures
         self.last_checkpoint={'unresolved_operations':list(unresolved),'source_failures':source_failures,
                               'plan':restored.get('plan',{})}
@@ -374,10 +383,7 @@ class Agent:
                 if budget<1024:raise ProviderError('Configured context is too small for the output limit and tool-schema reserve. Increase context or reduce output.')
                 request,changed=compact(messages,budget,image_start=image_start)
                 if changed:self.event('status','Summarizing earlier messages to keep working. Your full conversation is still saved.')
-                def provider_event(name,data):
-                    # Do not stream an unverified completion claim while a known
-                    # source failure is outstanding; publish the checked outcome.
-                    if name!='stream' or not unresolved:self.event(name,data)
+                provider_event=self.event
                 replay=self.source_retries(source_failures) if turn==0 and resume and c.use_tools else []
                 if replay:
                     # Continue task re-runs the failed reads itself before the model speaks again.
@@ -389,32 +395,24 @@ class Agent:
                 self.token.check()
                 answer=self.store.redactor.clean(answer)
                 calls=answer.get('tool_calls',[])
-                if not calls and unresolved and answer.get('content'):
-                    from .experience import action_name
-                    actions=', '.join(sorted({action_name(v) for v in unresolved.values()}))
-                    self.store.audit(tid,'unverified_model_report',{'content':answer['content']})
-                    if source_failures:
-                        guidance='Choose Continue task to retry when the source is available, or send a new request with the information you want me to use.'
-                        if any(value['operation'].startswith('mcp.') for value in source_failures.values()):
-                            guidance='Open Connect apps and check that the app is connected and signed in, then choose Continue task.'
-                        # The step's own error text is host-recorded data, not a model claim;
-                        # it is what tells the person (or IT) what actually has to change.
-                        reasons=list(dict.fromkeys(value.get('reason','') for value in source_failures.values() if value.get('reason')))
-                        reported=''.join('\n\nThe app answered: “'+reason+'”' for reason in reasons[:3])
-                        if reported:guidance+=' If the message above names something else to fix, that has to happen first.'
-                        answer['content']='Some steps still need checking: '+actions+'.'+reported+'\n\nI couldn’t read the source information, so further changes are paused. '+guidance+' Any earlier changes are listed in Recent activity.'
-                    else:
-                        answer['content']='Some steps still need checking: '+actions+'.\n\nOne or more steps did not complete successfully. Any changes that already happened are listed in Recent activity. Choose Continue task to check what happened before retrying.'
-                    # Native provider history must not silently replace this host
-                    # outcome with the original, unsupported completion claim.
-                    answer.pop('native',None)
+                with self.inbox_lock:pending=bool(self.inbox)
+                if not calls and not pending and answer.get('content'):
+                    note=self.outcome_note(unresolved,source_failures)
+                    if note:
+                        # The model's own report stays. The host adds only what it
+                        # recorded itself, so the person sees both side by side.
+                        self.store.audit(tid,'finished_with_step_errors',{'unresolved':sorted(set(unresolved.values())),
+                                                                          'source_failures':sorted(v['operation'] for v in source_failures.values())})
+                        answer['content']=answer['content'].rstrip()+'\n\n'+note
+                        # Later turns must see the note too, not the provider's
+                        # cached copy of the reply without it.
+                        answer.pop('native',None)
                 messages.append(answer);self.store.add_message(cid,answer);self.store.audit(tid,'usage',usage);self.event('usage',usage)
                 if answer['content']:self.event('message',answer)
                 if not calls:
                     if not answer.get('content'):raise ProviderError('Provider returned an empty final response.')
-                    with self.inbox_lock:pending=bool(self.inbox)
                     if pending:continue  # answer the message that arrived during this step
-                    status='needs_review' if unresolved else 'complete';return answer['content']
+                    status='needs_review' if source_failures else 'complete';return answer['content']
                 round_images=[]
                 for call in calls:
                     self.token.check()
@@ -469,10 +467,14 @@ class Agent:
                                 'error':'The result was too large to read and has not been supplied to the assistant. Request a smaller range or narrower query. Do not invent the missing contents. The operation may already have changed something; verify its effects before repeating it.'}
                         error=True;failure_type='ResultTooLarge';image=None
                     if tool_failed(operation,result):error=True;failure_type=failure_type or 'ToolResultError'
-                    if error:unresolved[identity]=operation
-                    else:
-                        unresolved.pop(identity,None);unresolved.pop(argument_identity,None)
-                    if error and executed and not invalid_arguments and self.is_source_read(operation,arguments):
+                    source_read=executed and self.is_source_read(operation,arguments)
+                    if error and executed and not invalid_arguments and not source_read and counts_as_refusal(operation,failure_type):
+                        unresolved[identity]=operation
+                    elif not error:
+                        # A later success of the same kind of action (for example the
+                        # launch that worked with the corrected app ID) settles it.
+                        for key in [key for key,value in unresolved.items() if value==operation]:unresolved.pop(key)
+                    if error and executed and not invalid_arguments and source_read:
                         source_failures[identity]={'operation':operation,'type':failure_type,'reason':failure_reason(result)}
                     elif not error:source_failures.pop(identity,None)
                     self.last_checkpoint['unresolved_operations']=list(unresolved)
@@ -501,5 +503,24 @@ class Agent:
             unread=self._drain_inbox(cid,close=True)
             self.store.checkpoint(tid,cid,status,self.last_checkpoint)
             self.event('done',{'status':status,'task_id':tid,'unread':unread})
+
+    def outcome_note(self,unresolved,source_failures):
+        """Host-recorded facts the person needs next to the model's reply, or ''."""
+        from .experience import action_name
+        parts=[]
+        if source_failures:
+            actions=', '.join(sorted({action_name(v['operation']) for v in source_failures.values()}))
+            reasons=list(dict.fromkeys(v.get('reason','') for v in source_failures.values() if v.get('reason')))
+            text='Note from Desktop Buddy: a step that read information for this task did not work ('+actions+').'
+            text+=''.join(' The app answered: “'+reason+'”' for reason in reasons[:3])
+            text+=' Anything above that depends on it is unconfirmed, and saving or typing new content stays paused until that read works.'
+            if any(v['operation'].startswith('mcp.') for v in source_failures.values()):
+                text+=' Open Connect apps to check the app is connected and signed in, then choose Continue task.'
+            else:text+=' Choose Continue task to try it again.'
+            parts.append(text)
+        if unresolved:
+            actions=', '.join(sorted({action_name(v) for v in unresolved.values()}))
+            parts.append('Note from Desktop Buddy: this step was refused and not retried successfully: '+actions+'. Check that part before relying on it.')
+        return '\n\n'.join(parts)
 
     def stop(self):self.token.stop()

@@ -49,8 +49,9 @@ TOPICS = {
         'always works. Settings → Keep Buddy offline blocks online requests and controlling other apps; it needs a local model.'),
     'stop': ('Stop or recover a task',
         'Use Stop to cancel the current task. Stop everything also disconnects computer control and closes Buddy’s browser '
-        '(Ctrl+Shift+Escape while Buddy is focused). Changes already made stay. “Some steps still need checking” means a step '
-        'failed and has not succeeded on recheck; Continue task retries it. After a restart Buddy keeps the conversation and '
+        '(Ctrl+Shift+Escape while Buddy is focused). Changes already made stay. “Buddy couldn’t read something it needed” means a '
+        'step that read information (an email search, a web page, a file) did not work; Buddy’s reply keeps a note about it '
+        'and Continue task tries that read again. After a restart Buddy keeps the conversation and '
         'does not repeat interrupted actions on its own.'),
     'history': ('History and preferences',
         'Conversations in the sidebar can be searched, reopened, renamed or deleted; everything is stored on this computer. '

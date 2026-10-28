@@ -42,9 +42,10 @@ class RuntimeFixTests(Sandbox):
         task=self.store.tasks(cid)[0]
         self.assertEqual(task['status'],'needs_review')
         self.assertFalse((self.workspace/'report.txt').exists())
-        self.assertNotIn('Everything was verified.',self.store.messages(cid)[-1]['content'])
-        self.assertTrue(json.loads(task['checkpoint'])['unresolved_operations'])
-        self.assertTrue(self.store.messages(cid)[-1]['content'].startswith('Some steps still need checking:'))
+        self.assertTrue(json.loads(task['checkpoint'])['source_failures'])
+        # The reply is kept, and the host's own record sits right under it.
+        self.assertIn('Note from Desktop Buddy: a step that read information for this task did not work',self.store.messages(cid)[-1]['content'])
+        self.assertIn('unconfirmed',self.store.messages(cid)[-1]['content'])
         self.assertEqual([e[1]['status'] for e in events if e[0]=='done'],['needs_review'])
 
     def test_reading_an_unrelated_file_does_not_clear_a_failed_read(self):

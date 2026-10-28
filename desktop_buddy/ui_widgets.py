@@ -9,7 +9,8 @@ import gi
 from . import __version__
 
 gi.require_version('Gtk', '4.0')
-from gi.repository import GLib, Gtk, Pango
+gi.require_version('GdkPixbuf', '2.0')
+from gi.repository import GdkPixbuf, GLib, GObject, Gdk, Graphene, Gtk, Pango
 
 
 CSS = '''
@@ -46,7 +47,10 @@ button.copy-message:hover { opacity: 1; }
 .tool-card { border: 1px solid #dce2d6; border-radius: 12px; padding: 12px 16px; background: #f1f3ed; }
 .tool-card label { font-size: 13px; }
 .error-card { border-color: #d8afa0; background: #fff1e9; color: #6c392d; }
-.composer { background: #ffffff; border: 1px solid #bdccbb; border-radius: 20px; padding: 12px; box-shadow: 0 4px 18px alpha(#263b35, .05); }
+.composer { background: #ffffff; border: 1px solid #bdccbb; border-radius: 20px; padding: 4px 12px 12px; box-shadow: 0 4px 18px alpha(#263b35, .05); }
+.resize-handle { min-height: 14px; }
+.resize-grip { background: #d3dacf; border-radius: 999px; min-width: 44px; min-height: 4px; }
+.resize-handle:hover .resize-grip { background: #8fa392; }
 textview, textview text { background: transparent; color: #263b35; }
 textview { padding: 4px; }
 .composer textview { font-size: 16px; }
@@ -78,10 +82,28 @@ menubutton.model-menu > button:hover { background: #eef2e9; }
 checkbutton.menu-choice { padding: 6px 4px; border-radius: 8px; }
 checkbutton.menu-choice:hover { background: #eef2e9; }
 checkbutton.menu-choice:checked { background: #e1e9d9; }
+/* GTK's end-of-list glow drew a line between the conversation and the footer
+   that read as a divider belonging to the last message. The jump button already
+   shows when there is more to read, so drop the glow everywhere. */
+scrolledwindow > overshoot, scrolledwindow > undershoot { background: none; box-shadow: none; border: none; }
+button.screen-preview { background: #ffffff; border: 1px solid #dce2d6; border-radius: 12px; padding: 6px 14px 6px 6px; }
+button.screen-preview:hover { background: #eef2e9; border-color: #bdccbb; }
+.screen-preview picture { border-radius: 7px; }
+.preview-title { font-size: 14px; font-weight: 600; }
+.lightbox { background: alpha(#101814, .95); padding: 18px 24px 24px; }
+.lightbox-caption { color: #ffffff; font-size: 15px; font-weight: 600; }
+.lightbox-hint { color: alpha(#ffffff, .7); font-size: 13px; }
+button.lightbox-close { background: alpha(#ffffff, .14); color: #ffffff; }
+button.lightbox-close:hover { background: alpha(#ffffff, .26); }
 '''
 
 
 MODE_TITLES = ['Discuss only', 'Ask before acting', 'Just do it']
+PREVIEW_TITLE = 'Buddy’s latest look at your screen'
+PREVIEW_SIZE = (160, 90)
+INPUT_HEIGHT = 80
+INPUT_MIN = 48
+INPUT_GROW = 240
 MODE_IDS = ['plan', 'execute', 'yolo']
 
 
@@ -132,6 +154,72 @@ def menu_button(icon, tooltip, actions):
     return widget
 
 
+class Thumbnail(GObject.Object, Gdk.Paintable):
+    """Draws a texture but asks for a small size, so a full-size screenshot cannot widen its card."""
+
+    def __init__(self, texture, size):
+        super().__init__()
+        self.texture, self.size = texture, size
+
+    def do_get_intrinsic_width(self):
+        return self.size[0]
+
+    def do_get_intrinsic_height(self):
+        return self.size[1]
+
+    def do_snapshot(self, snapshot, width, height):
+        self.texture.snapshot(snapshot, width, height)
+
+
+def thumbnail(path, size=PREVIEW_SIZE):
+    # Twice the shown size keeps it sharp on high-resolution screens.
+    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), size[0] * 2, size[1] * 2, True)
+    return Thumbnail(Gdk.Texture.new_for_pixbuf(pixbuf), size)
+
+
+class Lightbox:
+    """Shows a picture over the whole window. Click anywhere, Close, or Esc returns."""
+
+    def __init__(self, window):
+        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.widget.add_css_class('lightbox')
+        self.widget.set_visible(False)
+        top = Gtk.Box(spacing=12)
+        self.caption = label('', 'lightbox-caption', ellipsize=Pango.EllipsizeMode.END, hexpand=True)
+        top.append(self.caption)
+        self.close_button = button('Close', lambda *_: self.close(), 'lightbox-close', 'window-close-symbolic')
+        top.append(self.close_button)
+        self.widget.append(top)
+        self.picture = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, can_shrink=True, hexpand=True, vexpand=True)
+        self.widget.append(self.picture)
+        hint = label('Click anywhere or press Esc to go back', 'lightbox-hint')
+        hint.set_halign(Gtk.Align.CENTER)
+        self.widget.append(hint)
+        click = Gtk.GestureClick()
+        click.connect('released', lambda *_: self.close())
+        self.widget.add_controller(click)
+        keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        keys.connect('key-pressed', self.key)
+        window.add_controller(keys)
+
+    def open(self, path, caption):
+        self.picture.set_filename(str(path))
+        self.picture.update_property([Gtk.AccessibleProperty.LABEL], [caption])
+        self.caption.set_text(caption)
+        self.widget.set_visible(True)
+        self.close_button.grab_focus()
+
+    def close(self):
+        self.widget.set_visible(False)
+
+    def key(self, _controller, keyval, *_):
+        if self.widget.get_visible() and keyval == Gdk.KEY_Escape:
+            self.close()
+            return True
+        return False
+
+
 def scroller(child, expand=True, minimum=0):
     widget = Gtk.ScrolledWindow()
     widget.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -158,8 +246,12 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.stop_button.set_tooltip_text('Stop actions and disconnect computer control · Ctrl+Shift+Escape')
     header.pack_end(app.stop_button)
     app.window.set_titlebar(header)
+    shell = Gtk.Overlay()
     root = Gtk.Box()
-    app.window.set_child(root)
+    shell.set_child(root)
+    app.window.set_child(shell)
+    app.lightbox = Lightbox(app.window)
+    shell.add_overlay(app.lightbox.widget)
     app.sidebar = sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
     sidebar.set_size_request(210, -1)
     sidebar.add_css_class('sidebar')
@@ -216,6 +308,7 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.transcript = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
     app.transcript.add_css_class('conversation')
     app.transcript_scroll = scroller(app.transcript, minimum=140)
+    app.transcript_scroll.add_css_class('transcript-scroll')
     conversation = Gtk.Overlay()
     conversation.set_child(app.transcript_scroll)
     app.jump_button = Gtk.Button.new_from_icon_name('go-bottom-symbolic')
@@ -256,12 +349,26 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.stream_scroll.set_visible(False)
 
     footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+    footer.set_margin_top(8)
     footer.set_margin_bottom(20)
     main.append(footer)
-    app.preview = Gtk.Picture(content_fit=Gtk.ContentFit.CONTAIN, can_shrink=True)
-    app.preview.set_size_request(-1, 140)
-    app.preview_box = Gtk.Expander(label='View computer screenshot')
-    app.preview_box.set_child(app.preview)
+    # The newest screenshot Buddy took. It is not part of any message, so it is
+    # its own labelled card that opens full size on click.
+    app.preview_box = Gtk.Button(halign=Gtk.Align.START)
+    app.preview_box.add_css_class('screen-preview')
+    app.preview_box.set_tooltip_text('See the screenshot bigger')
+    app.preview_box.update_property([Gtk.AccessibleProperty.LABEL], ['See Buddy’s latest screenshot of your screen bigger'])
+    preview_row = Gtk.Box(spacing=12)
+    app.preview = Gtk.Picture(content_fit=Gtk.ContentFit.COVER, can_shrink=True)
+    app.preview.set_size_request(PREVIEW_SIZE[0], PREVIEW_SIZE[1])
+    preview_row.append(app.preview)
+    preview_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, valign=Gtk.Align.CENTER)
+    preview_text.append(label(PREVIEW_TITLE, 'preview-title'))
+    app.preview_time = label('', 'muted')
+    preview_text.append(app.preview_time)
+    preview_row.append(preview_text)
+    app.preview_box.set_child(preview_row)
+    app.preview_box.connect('clicked', lambda *_: app.show_image(app.preview_path, PREVIEW_TITLE))
     app.preview_box.set_visible(False)
     footer.append(app.preview_box)
     status_row = Gtk.Box(spacing=8)
@@ -274,14 +381,66 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.recovery_button.set_visible(False)
     status_row.append(app.recovery_button)
     footer.append(status_row)
-    composer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    composer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
     composer.add_css_class('composer')
+    handle = Gtk.Box()
+    handle.add_css_class('resize-handle')
+    grip = Gtk.Box(halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, hexpand=True)
+    grip.add_css_class('resize-grip')
+    handle.append(grip)
+    handle.set_cursor_from_name('ns-resize')
+    handle.set_tooltip_text('Drag to make the message box taller or shorter · double-click to reset')
+    composer.append(handle)
     app.input = text_view(True)
     app.input.update_property([Gtk.AccessibleProperty.LABEL], ['Message Buddy'])
     app.input.set_tooltip_text('Tell Buddy what you need. Ctrl+Enter to send.')
     overlay = Gtk.Overlay()
-    input_scroll = scroller(app.input, False, 80)
-    input_scroll.set_max_content_height(180)
+    input_scroll = scroller(app.input, False, INPUT_HEIGHT)
+    # Grow with what is typed, and let the person drag the box taller or shorter.
+    input_scroll.set_propagate_natural_height(True)
+    app.input_scroll = input_scroll
+    app.input_height = app.store.get('input_height', INPUT_HEIGHT)
+    def apply_input_height():
+        # The chosen height is what the box asks for, not a minimum: in a short
+        # window it gives way to the conversation instead of making the window grow.
+        cap = max(INPUT_HEIGHT, int((app.window.get_height() or 860) * .6))
+        height = max(INPUT_MIN, min(app.input_height, cap))
+        app.input.set_size_request(-1, height)
+        input_scroll.set_max_content_height(max(height, INPUT_GROW))
+        input_scroll.set_min_content_height(min(height, INPUT_HEIGHT))
+    app.apply_input_height = apply_input_height
+    drag = Gtk.GestureDrag()
+    start = {}
+    def window_y(x, y):
+        found, point = handle.compute_point(app.window, Graphene.Point().init(x, y))
+        return point.y if found else y
+    def drag_begin(_gesture, x, y):
+        # Track the pointer in window coordinates: the handle itself moves as the
+        # box grows, so its own coordinates would fight the drag.
+        start['y'] = window_y(x, y)
+        start['height'] = max(input_scroll.get_height(), INPUT_MIN)
+    def drag_update(gesture, dx, dy):
+        found, x, y = gesture.get_start_point()
+        if not found or 'y' not in start:return
+        app.input_height = int(start['height'] + start['y'] - window_y(x + dx, y + dy))
+        apply_input_height()
+    def drag_end(*_):
+        start.clear()
+        app.input_height = max(INPUT_MIN, min(app.input_height, int((app.window.get_height() or 860) * .6)))
+        app.store.set('input_height', app.input_height)
+    drag.connect('drag-begin', drag_begin)
+    drag.connect('drag-update', drag_update)
+    drag.connect('drag-end', drag_end)
+    handle.add_controller(drag)
+    reset = Gtk.GestureClick()
+    def reset_height(_gesture, presses, *_):
+        if presses == 2:
+            app.input_height = INPUT_HEIGHT
+            app.store.set('input_height', INPUT_HEIGHT)
+            apply_input_height()
+    reset.connect('pressed', reset_height)
+    handle.add_controller(reset)
+    apply_input_height()
     overlay.set_child(input_scroll)
     placeholder = label('Tell me what you’d like help with…', 'muted')
     placeholder.set_halign(Gtk.Align.START)
@@ -358,6 +517,7 @@ def build_workspace(app, providers, text_view, default_workspace):
             last_width[0] = size
             if size[1] < 680:widget.add_css_class('compact')
             else:widget.remove_css_class('compact')
+            apply_input_height()
             if getattr(app, 'welcome_mark', None):app.welcome_mark.set_visible(size[1] >= 680)
             margin = max(20, (width - 800) // 2)
             for child in (app.transcript, footer):
@@ -500,6 +660,10 @@ def image_card(path, on_open):
         picture.set_size_request(-1, 220)
         picture.set_tooltip_text(str(file))
         picture.update_property([Gtk.AccessibleProperty.LABEL], ['Saved visual observation'])
+        picture.set_cursor_from_name('zoom-in')
+        click = Gtk.GestureClick()
+        click.connect('released', lambda *_: on_open(file))
+        picture.add_controller(click)
         box.append(picture)
     else:
         missing = label('The saved image is no longer available on disk.', 'muted', wrap=True)

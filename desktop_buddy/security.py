@@ -57,6 +57,12 @@ class StopToken:
             for p in list(self.processes):
                 self._kill(p)
 
+# Product and licence keys: four or more hyphenated groups of 4-6 capitals and
+# digits (7QX4T-HB2KM-…). Requiring a digit and a letter keeps words and dates out;
+# a key may follow an escaped newline inside JSON text.
+LICENCE_KEY = re.compile(r'(?:(?<=\\[nrt])|(?<![A-Za-z0-9-]))(?=[A-Z0-9-]*[0-9])(?=[A-Z0-9-]*[A-Z])[A-Z0-9]{4,6}(?:-[A-Z0-9]{4,6}){3,}(?![A-Za-z0-9-])')
+
+
 class Redactor:
     def __init__(self):
         self.secrets = set()
@@ -96,6 +102,21 @@ class Redactor:
                     value=value[:-length]+'[REDACTED]';break
         value=re.sub(r'(?:sk-|sk-ant-|xai-)[A-Za-z0-9_\-]*$', '[REDACTED]',value)
         return self.text(value)
+
+    def record(self, value):
+        """Like clean(), for things kept as logs (activity, task checkpoints).
+
+        Licence keys are hidden here only: the assistant still receives them in
+        the conversation, because typing a key into an app is a normal task.
+        """
+        value = self.clean(value)
+        if isinstance(value, str):
+            return LICENCE_KEY.sub('[REDACTED KEY]', value)
+        if isinstance(value, list):
+            return [self.record(v) for v in value]
+        if isinstance(value, dict):
+            return {k: self.record(v) for k, v in value.items()}
+        return value
 
     def clean(self, value):
         if isinstance(value, str):

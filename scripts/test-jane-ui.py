@@ -88,7 +88,7 @@ def tick():
             result['errors_present_recovery_before_raw_details']=True
             app.on_event('done',{'status':'needs_review','task_id':'fixture','unread':False})
             assert app.recovery_button.get_visible()
-            assert 'still need checking' in app.status.get_text()
+            assert 'couldn’t read something it needed' in app.status.get_text()
             result['unresolved_steps_are_not_announced_as_finished']=True
             review_cid=app.cid
             tid=app.store.task(review_cid,{})
@@ -97,7 +97,7 @@ def tick():
             assert not app.recovery_button.get_visible()
             app.cid=review_cid;app.render_history()
             assert app.recovery_button.get_visible()
-            assert 'still need checking' in app.status.get_text()
+            assert 'couldn’t read something it needed' in app.status.get_text()
             result['reopening_unresolved_conversation_keeps_continue_task']=True
             app.append('ERROR','invalid_api_key: synthetic authentication fixture')
             settings_button=next(w for w in walk(app.transcript) if isinstance(w,Gtk.Button) and w.get_label()=='Settings')

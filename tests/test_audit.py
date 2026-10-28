@@ -13,7 +13,8 @@ from desktop_buddy.browser import Browser
 from desktop_buddy.comfyui import ComfyUI, ComfyUIError
 from desktop_buddy.desktop import LazyBackend
 from desktop_buddy.providers import Provider, ProviderError
-from desktop_buddy.security import Cancelled, Denied, Redactor, StopToken
+from desktop_buddy.security import Cancelled, Denied, Policy, Redactor, StopToken
+from desktop_buddy.tools import Registry
 from desktop_buddy.state import ProviderConfig, Store
 from test_core import Sandbox, ScriptedProvider, final, tool_answer
 
@@ -211,3 +212,49 @@ class AdapterAuditTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class LicenceKeyLogTests(unittest.TestCase):
+    """Live 2026-10-27: a Resolve key read from Gmail and typed into the app sat in the activity log."""
+    KEY='7QX4T-HB2KM-W9RZD-PL3NE-5VCJA'
+
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
+        self.workspace=self.root/'work';self.workspace.mkdir()
+
+    def tearDown(self):self.tmp.cleanup()
+
+    def test_activity_log_hides_the_key_but_the_assistant_still_receives_it(self):
+        from desktop_buddy.agent import Agent
+        from test_core import ScriptedProvider, tool_answer, final
+        store=Store(self.root/'state',Redactor())
+        try:
+            registry=Registry(Policy(self.workspace,'yolo',False,lambda *_:True,protected=[store.root]),store)
+            registry.tools['mcp.call'].handler=Mock(return_value={'content':[{'type':'text','text':json.dumps({'body':'Your key:\n'+self.KEY})}]})
+            script=[tool_answer('mcp.call',{'server':'gmail','name':'read','arguments':{}},'1'),
+                    tool_answer('fs.write',{'path':'key.txt','content':self.KEY},'2'),final('I saved `'+self.KEY+'`.')]
+            cid=store.conversation();Agent(store,registry,ScriptedProvider(script)).run(cid,'Save my key')
+            self.assertEqual((self.workspace/'key.txt').read_text(),self.KEY)
+            self.assertIn(self.KEY,json.dumps(store.messages(cid)))
+            with store.lock:
+                logs=json.dumps([list(r) for r in store.db.execute('SELECT body FROM audit')]+[list(r) for r in store.db.execute('SELECT checkpoint FROM tasks')])
+            self.assertNotIn(self.KEY,logs);self.assertIn('[REDACTED KEY]',logs)
+        finally:store.close()
+
+    def test_keys_already_in_the_log_are_hidden_on_the_next_start(self):
+        store=Store(self.root/'state',Redactor())
+        with store.lock,store.db:
+            store.db.execute('INSERT INTO audit(task,event,body,created) VALUES (?,?,?,?)',('t','tool_started',json.dumps({'arguments':{'text':self.KEY}}),0))
+            store.db.execute('INSERT INTO audit(task,event,body,created) VALUES (?,?,?,?)',('t','report',json.dumps({'content':'Key:\n'+self.KEY+'\nVersion 2026-10-27'}),0))
+            store.db.execute('INSERT INTO tasks VALUES (?,?,?,?,?)',('t','c','complete',json.dumps({'pending_call':{'text':self.KEY}}),0))
+        store.set('log_schema',1);store.close()
+        store=Store(self.root/'state',Redactor())
+        try:
+            with store.lock:
+                bodies=[r[0] for r in store.db.execute('SELECT body FROM audit')]+[r[0] for r in store.db.execute('SELECT checkpoint FROM tasks')]
+            self.assertFalse(any(self.KEY in b for b in bodies))
+            self.assertIn('2026-10-27',bodies[1])
+            self.assertEqual(store.get('log_schema'),2)
+        finally:store.close()
+        wal=Path(str(self.root/'state'/'state.sqlite3')+'-wal')
+        self.assertNotIn(self.KEY.encode(),(self.root/'state'/'state.sqlite3').read_bytes()+(wal.read_bytes() if wal.exists() else b''))

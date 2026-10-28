@@ -485,8 +485,7 @@ class Registry:
         import gi
         gi.require_version('Gio','2.0')
         from gi.repository import Gio
-        app=Gio.DesktopAppInfo.new(x['desktop_id'])
-        if not app:raise ValueError('Application is not installed or desktop ID is unknown.')
+        app=desktop_app(Gio,x['desktop_id'])
         t.check();ok=app.launch([],None)
         return {'launched':bool(ok),'verified':False,'next':'Inspect desktop.accessibility or screenshot for the application.'}
 
@@ -563,3 +562,17 @@ class Registry:
         complete=sum(item['status']=='complete' for item in results)
         return {'jobs':results,'complete':complete,'failed':len(results)-complete,
             'verified':complete==len(results)}
+
+
+def desktop_app(Gio,desktop_id):
+    """Find an installed app by ID, with or without the .desktop ending."""
+    wanted=str(desktop_id).strip()
+    for candidate in dict.fromkeys([wanted,wanted+'.desktop',wanted.removesuffix('.desktop')+'.desktop']):
+        try:app=Gio.DesktopAppInfo.new(candidate)
+        except TypeError:app=None  # PyGObject raises "constructor returned NULL" for unknown IDs
+        if app:return app
+    key=wanted.removesuffix('.desktop').lower().rsplit('.',1)[-1]
+    close=sorted(info.get_id() for info in Gio.AppInfo.get_all()
+                 if info.get_id() and key and key in (info.get_id()+' '+info.get_name()).lower())[:5]
+    hint=' Installed apps with a similar name: '+', '.join(close)+'.' if close else ' Use system.inspect to list installed apps.'
+    raise ValueError('No installed app has the ID '+wanted+'.'+hint)

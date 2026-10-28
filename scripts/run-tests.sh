@@ -17,6 +17,7 @@ if [[ "${1:-}" == "--desktop" ]]; then
   "$buddy_python" scripts/test-ui.py
   "$buddy_python" scripts/test-conversation-ui.py
   "$buddy_python" scripts/test-conversation-ui.py --compact
+  "$buddy_python" scripts/test-screenshot-ui.py
   "$buddy_python" scripts/test-accessibility-control.py
   "$buddy_python" scripts/test-accessible-text-ui.py
   "$buddy_python" scripts/test-rejected-text-ui.py

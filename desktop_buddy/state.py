@@ -219,6 +219,22 @@ class Store:
                             config['context_tokens'] = CLOUD_CONTEXT
                     self.set(key, values)
                 self.set('capability_schema', 3)
+        if self.get('log_schema', 1) < 2:self.scrub_logs()
+
+    def scrub_logs(self):
+        """Hide licence keys already written to the activity log and task checkpoints."""
+        from .security import LICENCE_KEY
+        with self.lock, self.db:
+            for table, column in (('audit', 'body'), ('tasks', 'checkpoint')):
+                rows = self.db.execute(f'SELECT rowid,{column} FROM {table}').fetchall()
+                for rowid, value in rows:
+                    if not value or not LICENCE_KEY.search(value):continue
+                    try:cleaned = json.dumps(self.redactor.record(json.loads(value)))
+                    except ValueError:cleaned = LICENCE_KEY.sub('[REDACTED KEY]', value)
+                    self.db.execute(f'UPDATE {table} SET {column}=? WHERE rowid=?', (cleaned, rowid))
+            self.set('log_schema', 2)
+        # secure_delete overwrites freed pages; also fold the old pages out of the WAL file.
+        self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 
     def set(self,key,value):
         with self.lock,self.db:
@@ -344,7 +360,7 @@ class Store:
 
     def checkpoint(self,tid,cid,status,data):
         with self.lock,self.db:
-            self.db.execute('INSERT OR REPLACE INTO tasks VALUES (?,?,?,?,?)',(tid,cid,status,json.dumps(self.redactor.clean(data)),time.time()))
+            self.db.execute('INSERT OR REPLACE INTO tasks VALUES (?,?,?,?,?)',(tid,cid,status,json.dumps(self.redactor.record(data)),time.time()))
 
     def tasks(self,cid):
         with self.lock:
@@ -352,7 +368,7 @@ class Store:
 
     def audit(self,tid,event,data):
         with self.lock,self.db:
-            self.db.execute('INSERT INTO audit(task,event,body,created) VALUES (?,?,?,?)',(tid,event,json.dumps(self.redactor.clean(data)),time.time()))
+            self.db.execute('INSERT INTO audit(task,event,body,created) VALUES (?,?,?,?)',(tid,event,json.dumps(self.redactor.record(data)),time.time()))
 
     def audits(self,tid=None):
         with self.lock:

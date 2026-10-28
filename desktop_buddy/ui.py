@@ -485,7 +485,7 @@ class BuddyApp(Gtk.Application):
         needs_review = bool(tasks and tasks[0]['status']=='needs_review')
         recoverable = bool(tasks and tasks[0]['status'] in ('interrupted','cancelled','failed','needs_review'))
         self.recovery_button.set_visible(recoverable)
-        self.status.set_text('Some steps still need checking. Read the message above before using the result.' if needs_review else
+        self.status.set_text('Buddy couldn’t read something it needed · see the note under its reply. Continue task tries again.' if needs_review else
                             'This task stopped before finishing. You can continue when ready.' if recoverable else 'Ready when you are')
         self.update_readiness()
         if tasks and tasks[0]['status']=='failed':
@@ -584,7 +584,13 @@ class BuddyApp(Gtk.Application):
                 self.alert(friendly_error(data)[0])
         elif name=='usage':self.add_usage(data)
         elif name=='screenshot':
-            self.preview.set_filename(str(data));self.preview_box.set_visible(True)
+            from datetime import datetime
+            from .ui_widgets import thumbnail
+            self.preview_path=str(data)
+            try:self.preview.set_paintable(thumbnail(data))
+            except GLib.Error:self.preview.set_filename(str(data))
+            self.preview_time.set_text('Taken at '+datetime.now().strftime('%H:%M')+' · click to see it bigger')
+            self.preview_box.set_visible(True)
             # Never present a new window here: that would steal focus from the app
             # being controlled and invalidate the next desktop input action.
         elif name=='done':
@@ -597,7 +603,7 @@ class BuddyApp(Gtk.Application):
             waiting=data['status']=='complete' and needs_user_reply(getattr(self,'last_reply',''))
             if waiting:self.alert('Buddy needs something from you · read the message above and reply')
             elif data['status']=='failed':self.alert('Something went wrong. See the message above.')
-            elif data['status']=='needs_review':self.alert('Some steps still need checking. Read the message above before using the result.')
+            elif data['status']=='needs_review':self.alert('Buddy couldn’t read something it needed · see the note under its reply. Continue task tries again.')
             else:
                 self.status.remove_css_class('attention')
                 source=getattr(self,'stop_source',None)
@@ -954,9 +960,10 @@ class BuddyApp(Gtk.Application):
         dialog.present()
         return dialog
 
-    def show_image(self,path):
-        d=Gtk.Window(title='Desktop observation · local image',application=self,transient_for=self.window,default_width=1000,default_height=700)
-        picture=Gtk.Picture.new_for_filename(str(path));picture.set_can_shrink(True);picture.set_content_fit(Gtk.ContentFit.CONTAIN);d.set_child(picture);d.present()
+    def show_image(self,path,caption='Picture saved on this computer'):
+        # Inside the main window, not a new one: a separate window would take focus
+        # from an app Buddy may be controlling.
+        self.lightbox.open(path,caption)
 
     def mcp_dialog(self):
         from .mcp_ui import ConnectionsDialog

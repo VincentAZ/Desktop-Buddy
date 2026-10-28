@@ -84,7 +84,7 @@ class EvidenceTests(Sandbox):
         self.assertEqual(task['status'],'needs_review')
         self.assertTrue(json.loads(task['checkpoint'])['source_failures'])
 
-    def test_unverified_final_is_not_streamed_or_preserved_as_native_success(self):
+    def test_failed_read_note_is_added_and_native_copy_dropped(self):
         class StreamingProvider(ScriptedProvider):
             def complete(self,messages,tools,token,emit,local_only):
                 answer,usage=super().complete(messages,tools,token,emit,local_only)
@@ -97,10 +97,11 @@ class EvidenceTests(Sandbox):
         Agent(self.store,self.failing_browser(),provider,lambda *event:events.append(event)).run(cid,'Read the source')
         message=self.store.messages(cid)[-1]
         self.assertEqual(self.store.tasks(cid)[0]['status'],'needs_review')
-        self.assertIn('I couldn’t read the source information',message['content'])
-        self.assertNotIn('Everything was verified.',message['content'])
+        self.assertTrue(message['content'].startswith('Everything was verified.'))
+        self.assertIn('Note from Desktop Buddy: a step that read information for this task did not work (Open a web page).',message['content'])
+        self.assertIn('Anything above that depends on it is unconfirmed',message['content'])
+        # Later turns read the reply with the note, not the provider's cached copy.
         self.assertNotIn('native',message)
-        self.assertFalse(any(event[0]=='stream' for event in events))
 
     def test_successful_retry_allows_writing_the_actual_source(self):
         registry=self.registry()
@@ -183,10 +184,10 @@ class EvidenceTests(Sandbox):
                 final('I found your invoice: it was sent on Monday.')]
         cid=self.store.conversation();Agent(self.store,registry,ScriptedProvider(script)).run(cid,'Find my invoice')
         message=self.store.messages(cid)[-1]['content']
-        self.assertTrue(message.startswith('Some steps still need checking:'))
+        self.assertTrue(message.startswith('I found your invoice'))
         self.assertIn('The app answered: “'+google+'”',message)
-        self.assertIn('Open Connect apps',message);self.assertIn('that has to happen first',message)
-        self.assertNotIn('I found your invoice',message)
+        self.assertIn('Open Connect apps',message);self.assertIn('unconfirmed',message)
+        self.assertEqual(self.store.tasks(cid)[0]['status'],'needs_review')
         self.assertEqual(json.loads(self.store.tasks(cid)[0]['checkpoint'])['source_failures'].popitem()[1]['reason'],google)
 
     def test_continue_task_retries_the_failed_app_read_before_asking_the_model(self):
@@ -216,12 +217,35 @@ class EvidenceTests(Sandbox):
         self.assertIn('Open Connect apps',self.store.messages(cid)[-1]['content'])
         self.assertEqual(self.store.tasks(cid)[0]['status'],'needs_review')
 
-    def test_nonzero_command_exit_is_not_reported_as_completed_work(self):
-        registry=self.registry();registry.tools['shell.run'].handler=Mock(return_value={'exit_code':2,'output':'Failed','verified':False})
-        call=tool_answer('shell.run',{'argv':['example-command']},'1')
-        call['tool_calls'][0]['arguments']['purpose']='Run the requested operation.'
-        cid=self.store.conversation();Agent(self.store,registry,ScriptedProvider([call,final('Done')])).run(cid,'Run the operation')
-        self.assertEqual(self.store.tasks(cid)[0]['status'],'needs_review')
+    def test_nonzero_command_exit_is_information_for_the_model_not_a_failed_task(self):
+        # Live 2026-10-27: `ls` of a missing folder (exit 2) and `grep -c` counting
+        # zero missing libraries (exit 1) replaced two correct reports with a failure.
+        for code,output in [(2,'2.1.308 (Claude Code)\nls: cannot access versions: No such file or directory'),(1,'21.1.2.0010_studio\n0')]:
+            with self.subTest(exit_code=code):
+                registry=self.registry();registry.tools['shell.run'].handler=Mock(return_value={'exit_code':code,'output':output,'verified':False})
+                call=tool_answer('shell.run',{'argv':['bash','-c','checks']},'1')
+                call['tool_calls'][0]['arguments']['purpose']='Check what is installed.'
+                cid=self.store.conversation();Agent(self.store,registry,ScriptedProvider([call,final('Already the newest version.')])).run(cid,'Update it')
+                self.assertEqual(self.store.tasks(cid)[0]['status'],'complete')
+                self.assertEqual(self.store.messages(cid)[-1]['content'],'Already the newest version.')
+                tool=next(m for m in self.store.messages(cid) if m['role']=='tool')
+                self.assertTrue(tool['error'])  # the model is still told the command exited non-zero
+
+    def test_continue_task_does_not_inherit_the_previous_attempts_refusals(self):
+        registry=self.registry();registry.execute=Mock(return_value={'launched':False,'verified':False})
+        cid=self.store.conversation()
+        Agent(self.store,registry,ScriptedProvider([tool_answer('app.launch',{'desktop_id':'fixture'},'1'),final('It did not open.')])).run(cid,'Open it')
+        Agent(self.store,self.registry(),ScriptedProvider([final('It is open now.')])).run(cid,'Resume',resume=True)
+        self.assertEqual(self.store.tasks(cid)[0]['status'],'complete')
+        self.assertEqual(self.store.messages(cid)[-1]['content'],'It is open now.')
+
+    def test_a_declined_step_is_the_persons_choice_not_a_failure(self):
+        from desktop_buddy.security import Denied
+        registry=self.registry();registry.execute=Mock(side_effect=Denied('Not authorized.'))
+        cid=self.store.conversation()
+        Agent(self.store,registry,ScriptedProvider([tool_answer('app.launch',{'desktop_id':'fixture'},'1'),final('Okay, I left it closed.')])).run(cid,'Open it')
+        self.assertEqual(self.store.tasks(cid)[0]['status'],'complete')
+        self.assertEqual(self.store.messages(cid)[-1]['content'],'Okay, I left it closed.')
 
     def test_failed_discovery_and_new_read_tools_block_writes_until_retried(self):
         for name,arguments in [('fs.list',{'path':'.'}),('mcp.tools',{'server':'fixture'}),
@@ -271,11 +295,11 @@ class EvidenceTests(Sandbox):
                 finish['native']={'provider:model':[{'type':'text','text':'Everything worked perfectly.'}]}
                 provider=StreamingProvider([tool_answer(name,{},'1'),finish])
                 Agent(self.store,registry,provider,lambda *event:events.append(event)).run(cid,'Make the requested change')
-                self.assertEqual(self.store.tasks(cid)[0]['status'],'needs_review')
-                self.assertNotIn('Everything worked perfectly.',self.store.messages(cid)[-1]['content'])
-                self.assertIn('One or more steps did not complete successfully',self.store.messages(cid)[-1]['content'])
-                self.assertNotIn('native',self.store.messages(cid)[-1])
-                self.assertFalse(any(event[0]=='stream' for event in events))
+                message=self.store.messages(cid)[-1]
+                self.assertEqual(self.store.tasks(cid)[0]['status'],'complete')
+                self.assertTrue(message['content'].startswith('Everything worked perfectly.'))
+                self.assertIn('Note from Desktop Buddy: this step was refused and not retried successfully',message['content'])
+                self.assertNotIn('native',message)
 
     def test_sent_but_unverified_input_is_distinct_from_an_explicit_rejection(self):
         from desktop_buddy.agent import tool_failed
@@ -289,9 +313,20 @@ class EvidenceTests(Sandbox):
         execute=registry.execute
         outcomes=iter([{'launched':False,'verified':False},{'launched':True,'verified':False}])
         registry.execute=lambda name,args,*rest:next(outcomes) if name=='app.launch' else execute(name,args,*rest)
-        script=[tool_answer('app.launch',{'desktop_id':'fixture.desktop'},'1'),
+        # Live 2026-10-27: the retry used the corrected ID (with .desktop), which
+        # is a different request but settles the same action.
+        script=[tool_answer('app.launch',{'desktop_id':'com.blackmagicdesign.resolve'},'1'),
                 tool_answer('fs.list',{'path':'.'},'2'),
-                tool_answer('app.launch',{'desktop_id':'fixture.desktop'},'3'),final('The launch request succeeded.')]
+                tool_answer('app.launch',{'desktop_id':'com.blackmagicdesign.resolve.desktop'},'3'),final('Resolve is open.')]
         cid=self.store.conversation();Agent(self.store,registry,ScriptedProvider(script)).run(cid,'Launch the app')
         self.assertEqual(self.store.tasks(cid)[0]['status'],'complete')
+        self.assertEqual(self.store.messages(cid)[-1]['content'],'Resolve is open.')
         self.assertFalse(json.loads(self.store.tasks(cid)[0]['checkpoint'])['unresolved_operations'])
+
+    def test_launch_accepts_an_id_without_the_desktop_ending(self):
+        from desktop_buddy.tools import desktop_app
+        found=Mock(name='app')
+        gio=Mock();gio.DesktopAppInfo.new=Mock(side_effect=lambda value:found if value=='fixture.desktop' else (_ for _ in ()).throw(TypeError('constructor returned NULL')))
+        self.assertIs(desktop_app(gio,'fixture'),found)
+        gio.AppInfo.get_all=Mock(return_value=[])
+        with self.assertRaisesRegex(ValueError,'No installed app has the ID missing'):desktop_app(gio,'missing')
