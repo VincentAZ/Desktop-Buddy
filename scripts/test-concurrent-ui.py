@@ -42,6 +42,7 @@ c=app.store.configs()['lmstudio'];c.base_url=f'http://127.0.0.1:{server.server_p
 c.model='concurrency-fixture';app.store.save_config(c)
 app.store.set('provider','lmstudio');app.store.set('mode','plan');app.credentials.cache['lmstudio']=''
 phase=0;started=time.monotonic();result={};ids={}
+cleanup_entered=threading.Event();cleanup_release=threading.Event()
 
 def select(cid):
     row=app.history.get_first_child()
@@ -139,10 +140,31 @@ def tick():
             phase=12
         elif phase==12 and not result['approval_thread'].is_alive():
             result.pop('approval_thread');result['background_approval_is_scoped']=True
-            app.emergency();phase=9
+            browser=app.sessions[ids['alpha']].browser
+            original_close=browser.close
+            def slow_close():
+                # An old conversation's browser must never delay stopping delta.
+                assert all(s.start_token.event.is_set() for s in app.sessions.values())
+                cleanup_entered.set();cleanup_release.wait(10);original_close()
+            browser.close=slow_close
+            before=time.monotonic();app.stop_button.emit('clicked')
+            assert time.monotonic()-before<.5
+            assert app.stop_button.get_label()=='Stopped'
+            assert all(s.start_token.event.is_set() for s in app.sessions.values())
+            app.stop_button.emit('clicked')  # repeated clicks remain responsive
+            phase=9
         elif phase==9 and not app.any_running():
             assert all(s.start_token.event.is_set() for s in app.sessions.values())
+            assert cleanup_entered.is_set() and app.stop_cleanup_pending
+            # Simulate a progress callback queued immediately before Stop.
+            session=app.current_session;before=app.status.get_text()
+            app.session_event(app.cid,session.generation,'status','Still working')
+            assert app.status.get_text()==before
+            cleanup_release.set();phase=13
+        elif phase==13 and not app.stop_cleanup_pending:
+            assert app.status.get_text()=='Stopped · computer control and app connections are closed'
             result['background_completion_and_stop_everything']=True
+            result['stop_button_stays_responsive_during_browser_cleanup']=True
             app.quit();return False
     except Exception as error:
         import traceback
@@ -152,6 +174,7 @@ def tick():
 GLib.timeout_add(50,tick)
 try:app.run([])
 finally:
+    cleanup_release.set()
     app.emergency()
     approval=result.pop('approval_thread',None)
     if approval:approval.join(3)
