@@ -271,6 +271,29 @@ class AgentTests(Sandbox):
         error=next(json.loads(r['body']) for r in self.store.audits(self.store.tasks(cid)[0]['id']) if r['event']=='task_error')
         self.assertIn('response limit of 4,096 tokens',error['error'])
 
+    def test_dropped_model_connection_is_retried_then_fails_plainly(self):
+        from desktop_buddy.providers import StreamInterrupted
+        class Dropping(ScriptedProvider):
+            def __init__(self,script):super().__init__(script);self.seen=[]
+            def complete(self,messages,*args):
+                self.seen.append(copy.deepcopy(messages));item=next(self.script)
+                if isinstance(item,Exception):raise item
+                return item,{'input_tokens':3,'output_tokens':5}
+        provider=Dropping([StreamInterrupted('ReadTimeout'),final('Done after a retry')])
+        agent=Agent(self.store,self.registry(),provider);cid=self.store.conversation()
+        self.assertEqual(agent.run(cid,'Add themes'),'Done after a retry')
+        self.assertEqual(len(provider.seen),2)
+        self.assertEqual(provider.seen[1][1:],provider.seen[0][1:])  # the same request again: no host note, nothing lost
+        self.assertEqual([m['role'] for m in self.store.messages(cid)],['user','assistant'])
+        events=[json.loads(r['body']) for r in self.store.audits(self.store.tasks(cid)[0]['id']) if r['event']=='stream_interrupted']
+        self.assertEqual(events,[{'cause':'ReadTimeout','attempt':1}])
+        provider=Dropping([StreamInterrupted('ConnectionError')]*3+[final('never reached')])
+        agent=Agent(self.store,self.registry(),provider);cid=self.store.conversation()
+        self.assertEqual(agent.run(cid,'Add themes'),'')
+        self.assertEqual(self.store.tasks(cid)[0]['status'],'failed');self.assertEqual(len(provider.seen),3)
+        error=next(json.loads(r['body']) for r in self.store.audits(self.store.tasks(cid)[0]['id']) if r['event']=='task_error')
+        self.assertIn('stopped sending its reply (ConnectionError)',error['error']);self.assertEqual(error['type'],'StreamInterrupted')
+
     def test_command_needs_purpose_before_host_approval_or_execution(self):
         provider=ScriptedProvider([tool_answer('shell.run',{'argv':['touch','unexpected']},'1'),final('Needs explanation')])
         registry=self.registry();registry.policy.approve=Mock(return_value=True)

@@ -86,6 +86,50 @@ class ProviderProtocolTests(unittest.TestCase):
     def test_switch_does_not_forward_other_provider_reasoning(self):
         p=self.provider('lmstudio');m={'role':'assistant','content':'hello','native':{'moonshot:other-model':{'reasoning_content':'provider-private'}}}
         _,body=p.payload([m],[]);self.assertNotIn('reasoning_content',body['messages'][0])
+    def test_streams_wait_minutes_for_the_model_and_a_dropped_stream_is_typed(self):
+        import requests
+        from desktop_buddy.providers import StreamInterrupted,STREAM_READ_TIMEOUT
+        self.assertGreaterEqual(STREAM_READ_TIMEOUT,120)
+        class Response:
+            status_code=200;headers={}
+            def __init__(self,lines,fail):self.lines=lines;self.fail=fail
+            def iter_lines(self,chunk_size=None):
+                yield from self.lines
+                if self.fail:raise requests.ReadTimeout('no bytes for a while')
+            def iter_content(self,size=None):yield b'{"data":[{"id":"fixture"}]}'
+            def close(self):pass
+        p=self.provider('anthropic');seen=[]
+        def fake(method,url,**kwargs):
+            seen.append(kwargs['timeout'])
+            return Response([b'data: {"type":"message_start","message":{"usage":{"input_tokens":1}}}',b'',
+                             b'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"run_tool","input":{}}}',b''],fail=True)
+        with patch.object(p.session,'request',side_effect=fake):
+            with self.assertRaises(StreamInterrupted) as dropped:
+                p._complete_http([{'role':'user','content':'hi'}],ENVELOPES,StopToken())
+            self.assertEqual(dropped.exception.cause,'ReadTimeout')
+            self.assertIn('no actions were executed',str(dropped.exception))
+            self.assertEqual(p._models_http(StopToken(),False)[0]['id'],'fixture')
+        self.assertEqual(seen,[(5,STREAM_READ_TIMEOUT),(5,30)])  # a plain request still fails fast
+
+    def test_worker_errors_keep_their_kind_across_the_inference_pipe(self):
+        import contextlib,io
+        from dataclasses import asdict
+        from desktop_buddy import inference
+        from desktop_buddy.providers import OutputLimitReached,StreamInterrupted
+        config=asdict(self.provider('anthropic').config)
+        request=json.dumps({'config':config,'key':'','operation':'complete','local_only':False,'messages':[],'tools':[]})
+        for error in (OutputLimitReached(4096),StreamInterrupted('ReadTimeout'),ProviderError('plain failure')):
+            with self.subTest(error=type(error).__name__):
+                out=io.StringIO()
+                with patch('desktop_buddy.providers.Provider._complete_http',side_effect=error),patch('sys.stdin',io.StringIO(request)),contextlib.redirect_stdout(out):
+                    inference.main()
+                event=json.loads(out.getvalue())
+                self.assertEqual(event['kind'],'error')
+                rebuilt=inference.worker_error(event['data'])
+                self.assertIs(type(rebuilt),type(error));self.assertEqual(str(rebuilt),str(error))
+        self.assertEqual(inference.worker_error({'message':'x','type':'OutputLimitReached','limit':4096}).limit,4096)
+        self.assertIs(type(inference.worker_error('older worker text')),ProviderError)
+
     def test_missing_vision_or_tools_errors_before_network(self):
         p=self.provider('lmstudio');p.config.tools=False;p.config.vision=False
         with self.assertRaises(ProviderError):p.complete([{'role':'user','content':'hi'}],ENVELOPES,StopToken())

@@ -14,6 +14,22 @@ class ProviderError(Exception):
     pass
 
 
+class StreamInterrupted(ProviderError):
+    """The connection dropped while the model was replying (often a slow first token
+    on a long request). Partial text and tool calls were discarded, so nothing ran;
+    the agent can send the same request again."""
+    def __init__(self,cause):
+        self.cause=cause
+        super().__init__(f'The model service stopped sending its reply ({cause}). Partial tool calls were discarded; no actions were executed.')
+
+
+# Cloud models can take well over a minute before the first streamed byte of a long
+# request, and later pauses happen while they think. The inference worker already
+# limits a whole reply to ten minutes, so the per-read timeout only has to catch a
+# connection that is truly dead.
+STREAM_READ_TIMEOUT=300
+
+
 class OutputLimitReached(ProviderError):
     """The model hit the configured response limit mid-reply. Partial text and
     tool calls were discarded, so nothing ran; the agent can retry in smaller steps."""
@@ -91,7 +107,7 @@ class Provider:
             token.check()
             try:
                 r=self.session.request('POST' if body is not None else 'GET',url,json=body,
-                    headers=self.headers(),timeout=(5,30),stream=True,allow_redirects=False)
+                    headers=self.headers(),timeout=(5,STREAM_READ_TIMEOUT if stream else 30),stream=True,allow_redirects=False)
             except requests.RequestException as e:
                 # POST may have been processed: never blindly retry ambiguous inference requests.
                 raise ProviderError(f'Cannot reach {self.config.id}. Check its server, URL and network ({type(e).__name__}).') from e
@@ -276,7 +292,7 @@ class Provider:
             return answer,usage
         except requests.RequestException as e:
             token.check()
-            raise ProviderError('Inference stream interrupted. Partial tool calls were discarded; no actions were executed.') from e
+            raise StreamInterrupted(type(e).__name__) from e
         finally:
             response.close()
 

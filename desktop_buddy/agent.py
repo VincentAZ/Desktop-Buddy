@@ -7,7 +7,7 @@ import threading
 from collections import Counter
 from pathlib import Path
 from .security import Cancelled, Denied, StopToken, InvalidArguments
-from .providers import ProviderError,OutputLimitReached
+from .providers import ProviderError,OutputLimitReached,StreamInterrupted
 
 ENVELOPES=[
  {'name':'discover_tools','description':'Find tools by keyword (attachments, Excel, files, desktop, browser, shell, ComfyUI, memory, skills, task). Returns exact input schemas. Discover before invoking an unfamiliar tool.',
@@ -57,6 +57,8 @@ def estimate_tokens(items):
 
 # Retries after a reply hits the response limit before the task is reported as failed.
 MAX_CUTOFFS=2
+# Retries after the connection to the model drops mid-reply before the task is reported as failed.
+MAX_DROPS=2
 
 
 def request_budget(config):
@@ -408,7 +410,7 @@ class Agent:
             if not c.use_vision:
                 for message in messages:
                     if message.pop('images',None):message['content']=message.get('content','')+' [Historical image omitted: current model has no vision.]'
-            failures=Counter();cutoffs=0
+            failures=Counter();cutoffs=0;drops=0
             self.registry.progress=lambda text:self.event('status',text)
             self.registry.attention=lambda text:self.event('attention',text)
             for turn in range(self.max_rounds):
@@ -439,6 +441,14 @@ class Agent:
                         if cutoffs>MAX_CUTOFFS:raise
                         self.event('status','Buddy’s reply was too long to finish · trying again in smaller steps…')
                         messages.append({'role':'user','content':f'Note from Desktop Buddy (host): your previous reply exceeded the response limit of {e.limit:,} tokens and was discarded; nothing was executed. Continue in smaller steps that each fit well under the limit: create long files in parts (write the first part, then add the rest with further steps), keep reasoning brief, and avoid repeating content you already have.'})
+                        continue
+                    except StreamInterrupted as e:
+                        # The connection dropped mid-reply. Nothing ran and nothing was
+                        # added to the conversation, so the same request is sent again.
+                        drops+=1
+                        self.store.audit(tid,'stream_interrupted',{'cause':e.cause,'attempt':drops})
+                        if drops>MAX_DROPS:raise
+                        self.event('status','The connection to the model dropped · sending the request again…')
                         continue
                 self.token.check()
                 answer=self.store.redactor.clean(answer)

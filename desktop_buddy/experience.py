@@ -105,6 +105,9 @@ def friendly_error(error):
     if 'declined this request' in value:
         return ('The AI service declined this request.',
                 'Nothing was changed. Try saying what you need in a different way.')
+    if 'stopped sending its reply' in value:
+        return ('The connection to the AI service dropped.',
+                'Buddy sent the request again and the connection dropped each time. Nothing was changed. Check your connection, then try again.')
     if 'context budget' in value:
         return ('Buddy needs more room to finish this task.',
                 'Your progress is saved. Check any completed changes before retrying. Ask IT to adjust the assistant for longer tasks.')

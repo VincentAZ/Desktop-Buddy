@@ -44,7 +44,7 @@ def isolated_operation(config, key, operation, token, local_only=False, payload=
                 event=json.loads(line)
                 if event['kind']=='stream':emit('stream',event['data'])
                 elif event['kind']=='result':answer=event['data']
-                elif event['kind']=='error':raise ProviderError(event['data'])
+                elif event['kind']=='error':raise worker_error(event['data'])
         token.check()
         if answer is None:raise ProviderError('Provider worker exited without a complete response.')
         return answer
@@ -55,6 +55,16 @@ def isolated_operation(config, key, operation, token, local_only=False, payload=
         token._kill(proc);proc.wait();token.untrack(proc);selector.close()
         if not proc.stdin.closed:proc.stdin.close()
         proc.stdout.close()
+
+
+def worker_error(data):
+    """Rebuild the worker's exception with its kind, so the agent can tell a reply
+    cut at the response limit or a dropped connection (both retryable) from other errors."""
+    from .providers import ProviderError,OutputLimitReached,StreamInterrupted
+    if not isinstance(data,dict):return ProviderError(str(data))
+    if data.get('type')=='OutputLimitReached':return OutputLimitReached(int(data.get('limit') or 0))
+    if data.get('type')=='StreamInterrupted':return StreamInterrupted(str(data.get('cause') or 'unknown'))
+    return ProviderError(str(data.get('message','')))
 
 
 def main():
@@ -78,6 +88,7 @@ def main():
             result=provider.request('/api/show',StopToken(),{'model':provider.config.model},local_only=True)
         else:raise ValueError('Unknown provider operation.')
         send('result',result)
-    except Exception as e:send('error',str(e))
+    except Exception as e:
+        send('error',{'message':str(e),'type':type(e).__name__,'limit':getattr(e,'limit',None),'cause':getattr(e,'cause',None)})
 
 if __name__=='__main__':main()
