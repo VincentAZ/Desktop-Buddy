@@ -64,6 +64,10 @@ def steps():
     settings.close()
     help_texts = [w.get_text() for w in walk(app.window) if isinstance(w, Gtk.Label)]
     if app.restart_bar.get_visible(): failures.append('restart bar shown with unchanged code')
+    # The person can always restart from the sidebar, not only after a code change.
+    if 'Restart Buddy' not in help_texts: failures.append('no Restart Buddy button in the sidebar')
+    accels = app.get_accels_for_action('app.restart-app')  # GTK reports a normalised spelling
+    if not accels or Gtk.accelerator_parse(accels[0]) != Gtk.accelerator_parse('<Primary><Shift>r'): failures.append('restart shortcut missing: '+repr(accels))
     # Pretend the files on disk changed: the bar must appear with a Restart Buddy button.
     selfdev._LOADED = 'stale'
     app.refresh_restart_bar()
@@ -81,7 +85,16 @@ def steps():
     yield 0.2
     if 'other conversations' not in app.restart_label.get_text(): failures.append('busy restart did not defer: '+app.restart_label.get_text())
     if not app.get_windows(): failures.append('app quit while a conversation was working')
+    if not app.restart_pending: failures.append('deferred restart was not remembered')
+    app.refresh_restart_bar()
+    if 'as soon as' not in app.restart_label.get_text(): failures.append('code-change text replaced the person’s pending restart')
+    # When the last working conversation finishes, the remembered restart happens by itself.
+    launched = []
+    app.restart_app = lambda *_: launched.append(True) or False
     app.current_session.worker = None
+    app.session_event(app.cid, app.current_session.generation, 'done', {'status': 'complete'})
+    yield 0.2
+    if not launched: failures.append('pending restart did not fire when the conversation finished')
     print('FAILURES: '+'; '.join(failures) if failures else 'Self-update UI check passed. Screenshots: '+str(root), flush=True)
     app.quit()
 

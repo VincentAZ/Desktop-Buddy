@@ -59,7 +59,8 @@ TOPICS = {
         'Use Stop to cancel the selected conversation’s task. Stop everything cancels every task, disconnects computer control and closes all Buddy browsers '
         '(Ctrl+Shift+Escape while Buddy is focused). Changes already made stay. “Buddy couldn’t read something it needed” means a '
         'step that read information (an email search, a web page, a file) did not work; Buddy’s reply keeps a note about it '
-        'and Continue task tries that read again. After a restart Buddy keeps the conversation and '
+        'and Continue task tries that read again. Restart Buddy in the sidebar (Ctrl+Shift+R) closes Buddy and opens it '
+        'again; if a conversation is still working, the restart waits and happens on its own when it finishes. After a restart Buddy keeps the conversation and '
         'does not repeat interrupted actions on its own.'),
     'own-code': ('Let Buddy improve itself',
         'Under Settings → IT setup, turn on Let Buddy change its own code. Then ask for the change in plain words, for example '

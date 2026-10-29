@@ -87,12 +87,14 @@ class BuddyApp(Gtk.Application):
         self.cid=None;self.sessions={};self.desktop_lease=DesktopLease()
         self.pending=[];self.desktop=None;self.a11y=None;self.aux_tokens=[]
         self.emergency_latched=False;self.window_handle='';self.task_usage={}
+        self.restart_pending=False  # a restart asked for while a conversation was still working
         self.stop_cleanup_pending=False
         self.connect('activate',self.activate)
         stop=Gio.SimpleAction.new('emergency',None);stop.connect('activate',lambda *_:self.emergency('the Ctrl+Shift+Escape shortcut'));self.add_action(stop)
         new=Gio.SimpleAction.new('new-conversation',None);new.connect('activate',lambda *_:self.new_conversation());self.add_action(new)
         search=Gio.SimpleAction.new('search-conversations',None);search.connect('activate',lambda *_:self.focus_history());self.add_action(search)
         settings=Gio.SimpleAction.new('provider-settings',None);settings.connect('activate',lambda *_:self.settings_dialog());self.add_action(settings)
+        restart=Gio.SimpleAction.new('restart-app',None);restart.connect('activate',lambda *_:self.restart_app());self.add_action(restart)
         # Same code path as the Desktop control button, reachable from a terminal for
         # testing: gapplication action io.desktopbuddy.App connect-desktop
         connect=Gio.SimpleAction.new('connect-desktop',None);connect.connect('activate',lambda *_:self.connect_desktop());self.add_action(connect)
@@ -100,6 +102,7 @@ class BuddyApp(Gtk.Application):
         self.set_accels_for_action('app.new-conversation',['<Primary>n'])
         self.set_accels_for_action('app.search-conversations',['<Primary>k'])
         self.set_accels_for_action('app.provider-settings',['<Primary>comma'])
+        self.set_accels_for_action('app.restart-app',['<Primary><Shift>r'])
 
     def activate(self,*_):
         # PyGObject prints exceptions raised by signal handlers but does not make
@@ -717,7 +720,7 @@ class BuddyApp(Gtk.Application):
         if name=='done':
             agent=session.agent;selfdev=getattr(getattr(agent,'registry',None),'selfdev',None)
             self.refresh_restart_bar()
-            if selfdev is not None and selfdev.restart_requested:self.restart_app()
+            if (selfdev is not None and selfdev.restart_requested) or self.restart_pending:self.restart_app()
         return False
 
     def refresh_restart_bar(self):
@@ -725,25 +728,29 @@ class BuddyApp(Gtk.Application):
         if not hasattr(self,'restart_bar'):return
         from .selfdev import restart_needed
         needed=restart_needed()
+        if self.restart_pending:return  # the person already asked; that message stays
         if needed:
             busy=any(s.running for s in self.sessions.values())
             self.restart_label.set_text('Buddy’s code has changed. Restart to use the new version.'+(' Wait for the other conversations to finish first.' if busy else ''))
         self.restart_bar.set_visible(needed)
 
     def restart_app(self,*_):
-        """Start a fresh Buddy on the new code once no conversation is working. The
+        """Start a fresh Buddy (the Restart Buddy button, Ctrl+Shift+R, or a code change)
+        once no conversation is working; conversations are kept. Asked while a task runs, the
+        restart waits and happens on its own when the last working conversation finishes. The
         new process waits for this one to exit so GTK does not hand it to the old instance."""
+        import os,subprocess,sys
         from .paths import source_root
         root=source_root()
-        if root is None:return False
         if any(s.running for s in self.sessions.values()):
-            self.restart_label.set_text('Buddy’s code has changed. Restart when the other conversations finish.')
+            self.restart_pending=True
+            self.restart_label.set_text('Buddy will restart as soon as the other conversations finish working. Nothing is lost.')
             self.restart_bar.set_visible(True);return False
-        import os,subprocess
-        script=f'while kill -0 {os.getpid()} 2>/dev/null; do sleep 0.2; done; exec "$0"'
-        subprocess.Popen(['bash','-c',script,str(root/'launch.sh')],cwd=root,stdin=subprocess.DEVNULL,
+        command=[str(root/'launch.sh')] if root else [sys.executable,'-m','desktop_buddy']
+        script=f'while kill -0 {os.getpid()} 2>/dev/null; do sleep 0.2; done; exec "$@"'
+        subprocess.Popen(['bash','-c',script,'buddy-restart',*command],cwd=root,stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
-        self.store.audit('','self_restart',{'version_on_disk':self.version_on_disk()})
+        self.store.audit('','self_restart',{'version_on_disk':self.version_on_disk(),'waited':self.restart_pending})
         self.close_requested();return False
 
     def version_on_disk(self):

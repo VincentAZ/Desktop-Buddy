@@ -195,6 +195,9 @@ def build_workspace(app, providers, text_view, default_workspace):
     sidebar.append(button('Recent activity', lambda *_: app.audit_dialog(), icon='document-open-recent-symbolic'))
     sidebar.append(button('Settings', lambda *_: app.settings_dialog(), icon='emblem-system-symbolic'))
     sidebar.append(button('Connected apps', lambda *_: app.mcp_dialog(), icon='network-server-symbolic'))
+    app.restart_button = button('Restart Buddy', lambda *_: app.restart_app(), icon='view-refresh-symbolic')
+    app.restart_button.set_tooltip_text('Close Buddy and open it again. Your conversations are kept. (Ctrl+Shift+R)')
+    sidebar.append(app.restart_button)
 
     main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
     root.append(main)
