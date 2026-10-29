@@ -103,6 +103,19 @@ Under the hood, Buddy includes:
 - ComfyUI health checks, workflow runs, prompt batches, cancellation, and output collection
 - Streaming tool calls, bounded retries, repeated-error detection, checkpoints, and explicit resume
 - Persistent conversation history, per-conversation drafts, task records, audit events, and editable memory
+- Self-modification tools that edit, test, version, commit, push and restart Buddy's own checkout under host-enforced rules
+
+## Let Buddy improve itself
+
+Turn on **Settings → IT setup → Let Buddy change its own code**, then ask in plain words: "add a dark blue theme", "make the Stop button easier to see", "update the README". Buddy works on its own source checkout on the `main` branch:
+
+1. Reads the files it needs and writes the change.
+2. For code, raises the version number in `desktop_buddy/__init__.py` and `pyproject.toml`, then runs the whole test suite until it passes. README, docs and image changes skip this step.
+3. Commits with a plain-language message in your git name.
+4. Pushes to GitHub with the SSH sign-in already on the computer, after pulling in anything newer there. It never force-pushes; a conflict stops it and tells you a manual merge is needed.
+5. For code, restarts itself so the change is live, or shows a **Restart Buddy** bar if another conversation is still working. The new version number appears in the header.
+
+In **Just do it** this runs without prompts; in **Ask before acting** you confirm the test run, the commit, the push and the restart. Git internals and sign-in key files stay off limits, and a code commit is refused until the tests pass on exactly the files being committed. The assistant's `self.*` tools and the `self-improve` skill implement this; see [security and privacy](docs/SECURITY.md) for the exact rules.
 
 ## Designed around honest boundaries
 
@@ -136,7 +149,7 @@ There is no Electron runtime, permanent local web server, telemetry service, age
 ./launch.sh --smoke-test --data-dir .test-data/smoke
 ```
 
-The suite covers provider protocols, tools, cancellations, credentials, conversations, state, portals, ComfyUI, model selection, and YOLO behavior. Native UI fixtures exercise compact and wide layouts, failure recovery, drafts, model switching, approval behavior, and the desktop-control shortcut.
+The suite covers provider protocols, tools, cancellations, credentials, conversations, state, portals, ComfyUI, model selection, YOLO behavior, and Buddy's self-modification rules. Native UI fixtures exercise compact and wide layouts, failure recovery, drafts, model switching, approval behavior, and the desktop-control shortcut.
 
 ## Project map
 
