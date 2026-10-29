@@ -1,5 +1,7 @@
 """Complete application palettes, independent of the desktop's GTK theme."""
 
+# Every palette defines the same roles. Light themes come first, then dark
+# ones; the menu shows them in this order.
 THEMES = {
     'sage': ('Sage · light', {
         'background': '#f8f7f3', 'text': '#263b35', 'muted': '#536259',
@@ -21,6 +23,26 @@ THEMES = {
         'danger': '#a03936', 'danger_fill': '#a03936', 'on_danger': '#ffffff',
         'error_bg': '#fff0ed', 'error_text': '#783b32', 'error_border': '#dcb4aa',
     }),
+    'linen': ('Linen · light', {
+        'background': '#faf6f0', 'text': '#3a2e26', 'muted': '#6b5c50',
+        'surface': '#ffffff', 'sidebar': '#f1ebe2', 'subtle': '#f4efe7',
+        'control': '#ece5db', 'hover': '#e0d6c8', 'selection': '#e6d9c6',
+        'soft_hover': '#f2ebe0', 'user': '#efe7dc', 'border': '#c9b8a3',
+        'line': '#dfd4c5', 'accent': '#8a4b2a', 'accent_hover': '#6e3a1f',
+        'on_accent': '#ffffff', 'author': '#7a4529', 'mark': '#f0e2d1',
+        'danger': '#9b3a33', 'danger_fill': '#9b3a33', 'on_danger': '#ffffff',
+        'error_bg': '#fdeeea', 'error_text': '#6e362e', 'error_border': '#d9aba1',
+    }),
+    'slate': ('Slate · light', {
+        'background': '#f5f6f8', 'text': '#1f2429', 'muted': '#555d66',
+        'surface': '#ffffff', 'sidebar': '#eaedf1', 'subtle': '#eff1f4',
+        'control': '#e4e8ed', 'hover': '#d6dce4', 'selection': '#d9e0e8',
+        'soft_hover': '#edf0f4', 'user': '#e8ecf1', 'border': '#b4bec9',
+        'line': '#d3d9e0', 'accent': '#2c5d7c', 'accent_hover': '#1f4760',
+        'on_accent': '#ffffff', 'author': '#355a73', 'mark': '#dde8f0',
+        'danger': '#a0393a', 'danger_fill': '#a0393a', 'on_danger': '#ffffff',
+        'error_bg': '#fcefed', 'error_text': '#733633', 'error_border': '#dbb0ab',
+    }),
     'midnight': ('Midnight · dark', {
         'background': '#181e29', 'text': '#edf1f7', 'muted': '#b4c0d2',
         'surface': '#222b39', 'sidebar': '#1c2431', 'subtle': '#222c3a',
@@ -31,14 +53,58 @@ THEMES = {
         'danger': '#ffb4aa', 'danger_fill': '#ffb4aa', 'on_danger': '#4b1714',
         'error_bg': '#3f292c', 'error_text': '#ffcbc2', 'error_border': '#875354',
     }),
+    'ember': ('Ember · dark', {
+        'background': '#1f1a18', 'text': '#f3ebe4', 'muted': '#c4b5ab',
+        'surface': '#2a2320', 'sidebar': '#241e1b', 'subtle': '#2a2421',
+        'control': '#3a302b', 'hover': '#4a3e38', 'selection': '#4b3a31',
+        'soft_hover': '#352c27', 'user': '#332924', 'border': '#7a6557',
+        'line': '#4d3f37', 'accent': '#f0a878', 'accent_hover': '#f7bf98',
+        'on_accent': '#3a1d0c', 'author': '#f3b58a', 'mark': '#4a3326',
+        'danger': '#ffb3a8', 'danger_fill': '#ffb3a8', 'on_danger': '#4a1511',
+        'error_bg': '#432a28', 'error_text': '#ffc9bf', 'error_border': '#8a5752',
+    }),
+    'forest': ('Forest · dark', {
+        'background': '#151e1a', 'text': '#e8f0ea', 'muted': '#aebfb4',
+        'surface': '#1e2a24', 'sidebar': '#19241f', 'subtle': '#1f2b25',
+        'control': '#2a3a32', 'hover': '#37493f', 'selection': '#334b3f',
+        'soft_hover': '#273830', 'user': '#25352d', 'border': '#5a7466',
+        'line': '#3b4f45', 'accent': '#9fd8b4', 'accent_hover': '#bce6ca',
+        'on_accent': '#0f2e1d', 'author': '#b0e0c2', 'mark': '#2c4538',
+        'danger': '#ffb4a8', 'danger_fill': '#ffb4a8', 'on_danger': '#4a1511',
+        'error_bg': '#3c2a29', 'error_text': '#ffcbc1', 'error_border': '#86554f',
+    }),
+    'contrast': ('High contrast · dark', {
+        'background': '#000000', 'text': '#ffffff', 'muted': '#d0d0d0',
+        'surface': '#111111', 'sidebar': '#0a0a0a', 'subtle': '#121212',
+        'control': '#262626', 'hover': '#383838', 'selection': '#2f3f55',
+        'soft_hover': '#1e1e1e', 'user': '#1c1c1c', 'border': '#8a8a8a',
+        'line': '#4a4a4a', 'accent': '#ffd54a', 'accent_hover': '#ffe27a',
+        'on_accent': '#000000', 'author': '#ffe27a', 'mark': '#3a3100',
+        'danger': '#ff9a8a', 'danger_fill': '#ff9a8a', 'on_danger': '#000000',
+        'error_bg': '#3a1a16', 'error_text': '#ffc2b5', 'error_border': '#a05a50',
+    }),
 }
 DEFAULT_THEME = 'sage'
+ROLES = tuple(THEMES[DEFAULT_THEME][1])
 
 
 def theme_css(name):
     palette = THEMES.get(name, THEMES[DEFAULT_THEME])[1]
     colors = '\n'.join(f'@define-color buddy_{role} {value};' for role, value in palette.items())
     return colors + '\n' + STYLES
+
+
+def contrast_ratio(foreground, background):
+    """WCAG contrast ratio between two '#rrggbb' colors (1 = none, 21 = black on white)."""
+    def luminance(color):
+        channels = []
+        for index in (1, 3, 5):
+            value = int(color[index:index + 2], 16) / 255
+            channels.append(value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4)
+        red, green, blue = channels
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    lighter, darker = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 STYLES = '''
