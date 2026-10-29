@@ -121,7 +121,7 @@ separator { background: @buddy_line; min-height: 1px; }
 .message-body { font-size: 16px; line-height: 1.4; }
 .user-message { background: @buddy_user; border-radius: 18px; padding: 18px 22px; margin-left: 48px; }
 .message-author { font-size: 12px; font-weight: 700; color: @buddy_author; }
-button.copy-message { min-height: 22px; min-width: 22px; padding: 2px; opacity: .7; }
+button.copy-message { min-height: 22px; padding: 2px 8px; font-size: 12px; opacity: .85; }
 button.copy-message:hover { opacity: 1; }
 .tool-card { border: 1px solid @buddy_line; border-radius: 12px; padding: 12px 16px; background: @buddy_subtle; }
 .tool-card label { font-size: 13px; }

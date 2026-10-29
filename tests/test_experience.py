@@ -48,6 +48,12 @@ class ExperienceTests(unittest.TestCase):
         self.assertIn('completed changes',body);self.assertIn('Ask IT',body)
         self.assertNotIn('tokens',title+body);self.assertNotIn('compaction',title+body)
 
+    def test_response_limit_and_refusal_have_plain_explanations(self):
+        title,body=friendly_error('The reply was cut off at the response limit of 4,096 tokens; nothing was executed.')
+        self.assertIn('too long',title);self.assertIn('Maximum response tokens',body);self.assertIn('smaller',body)
+        title,body=friendly_error('Claude declined this request; nothing was executed.')
+        self.assertIn('declined',title);self.assertIn('Nothing was changed',body)
+
     def test_raw_errors_stay_out_of_customer_summary(self):
         for raw in ('ConnectionRefusedError: [Errno 111]', 'invalid_api_key sk-test-12345', 'Traceback in /tmp/helper.py line 42'):
             title,body=friendly_error(raw)

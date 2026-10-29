@@ -99,6 +99,12 @@ def friendly_error(error):
     if any(term in value for term in ('429','rate limit','quota','insufficient credits','billing')):
         return ('The online service cannot take this request right now.',
                 'You may have reached its usage limit. Wait before trying again; check the service account if this continues.')
+    if 'response limit' in value:
+        return ('Buddy’s reply was too long to finish.',
+                'Buddy tried again in smaller steps and still ran out of room. Ask IT to raise “Maximum response tokens” for this assistant under Settings → IT setup, or ask for the work in smaller parts.')
+    if 'declined this request' in value:
+        return ('The AI service declined this request.',
+                'Nothing was changed. Try saying what you need in a different way.')
     if 'context budget' in value:
         return ('Buddy needs more room to finish this task.',
                 'Your progress is saved. Check any completed changes before retrying. Ask IT to adjust the assistant for longer tasks.')

@@ -46,6 +46,22 @@ class ProviderProtocolTests(unittest.TestCase):
         with self.assertRaises(ProviderError):self.provider('lmstudio').consume(events,StopToken(),lambda *_:None)
     def test_truncated_chat_fails_closed(self):
         with self.assertRaises(ProviderError):self.provider('openrouter').consume([{'choices':[{'delta':{},'finish_reason':'length'}]}],StopToken(),lambda *_:None)
+    def test_response_limit_is_reported_separately_from_refusals(self):
+        from desktop_buddy.providers import OutputLimitReached
+        p=self.provider('anthropic');p.config.max_output=4096
+        start=[{'type':'message_start','message':{'usage':{'input_tokens':2}}},{'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}}]
+        with self.assertRaises(OutputLimitReached) as cut:
+            p.consume(start+[{'type':'message_delta','delta':{'stop_reason':'max_tokens'},'usage':{'output_tokens':4096}}],StopToken(),lambda *_:None)
+        self.assertEqual(cut.exception.limit,4096);self.assertIn('response limit of 4,096 tokens',str(cut.exception))
+        with self.assertRaises(ProviderError) as refused:
+            p.consume(start+[{'type':'message_delta','delta':{'stop_reason':'refusal'},'usage':{}}],StopToken(),lambda *_:None)
+        self.assertNotIsInstance(refused.exception,OutputLimitReached);self.assertIn('declined',str(refused.exception))
+        with self.assertRaises(OutputLimitReached):
+            self.provider('openrouter').consume([{'choices':[{'delta':{},'finish_reason':'length'}]}],StopToken(),lambda *_:None)
+        with self.assertRaises(OutputLimitReached):
+            self.provider('ollama').consume([{'message':{'content':'x'},'done':True,'done_reason':'length'}],StopToken(),lambda *_:None)
+        with self.assertRaises(OutputLimitReached):
+            self.provider('openai').consume([{'type':'response.incomplete','response':{'incomplete_details':{'reason':'max_output_tokens'}}}],StopToken(),lambda *_:None)
     def test_anthropic_signed_thinking_and_tool_result_blocks(self):
         p=self.provider('anthropic')
         events=[{'type':'message_start','message':{'usage':{'input_tokens':11}}},

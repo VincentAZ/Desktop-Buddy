@@ -226,11 +226,17 @@ def build_workspace(app, providers, text_view, default_workspace):
     theme_popover.set_child(theme_box);app.theme_menu.set_popover(theme_popover)
     toolbar.append(app.theme_menu)
     toolbar.append(icon_button('emblem-system-symbolic','Settings',lambda *_:app.settings_dialog()))
+    app.copy_menu = menu_button('edit-copy-symbolic', 'Copy conversation', [
+        ('Copy whole conversation', app.copy_conversation),
+        ('Copy everything, including work details', lambda: app.copy_conversation(everything=True)),
+        ('Copy only my messages', lambda: app.copy_conversation('user')),
+        ('Copy only Buddy’s replies', lambda: app.copy_conversation('assistant')),
+    ])
+    toolbar.append(app.copy_menu)
     toolbar.append(menu_button('view-more-symbolic', 'Conversation options', [
         ('Rename conversation', app.rename_conversation_dialog),
         ('Copy whole conversation', app.copy_conversation),
-        ('Copy only my messages', lambda: app.copy_conversation('user')),
-        ('Copy only Buddy’s replies', lambda: app.copy_conversation('assistant')),
+        ('Copy everything, including work details', lambda: app.copy_conversation(everything=True)),
         ('Continue unfinished task', app.resume),
         ('Delete conversation…', app.delete_conversation_dialog),
     ]))
@@ -547,14 +553,7 @@ def message_card(who, text, on_copy=None):
     if on_copy is None:
         box.append(author)
     else:
-        heading = Gtk.Box(spacing=6)
-        author.set_hexpand(True)
-        author.set_valign(Gtk.Align.CENTER)
-        heading.append(author)
-        copy = icon_button('edit-copy-symbolic', 'Copy this message', lambda *_: on_copy(text))
-        copy.add_css_class('copy-message')
-        heading.append(copy)
-        box.append(heading)
+        box.append(copy_heading(author, lambda: on_copy(text, 'Your message' if who in ('YOU', 'USER') else 'Buddy’s reply')))
     body = label(text, 'message-body', wrap=True, selectable=True)
     if who not in ('YOU','USER'):body.set_markup(message_markup(text))
     body.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -562,13 +561,29 @@ def message_card(who, text, on_copy=None):
     return box
 
 
-def activity_card(who, text):
+def copy_heading(title_widget, on_copy):
+    """A card heading with a plain "Copy" button on the right. The button is always
+    visible: a faint icon was not found by people looking for a way to copy."""
+    heading = Gtk.Box(spacing=6)
+    title_widget.set_hexpand(True)
+    title_widget.set_valign(Gtk.Align.CENTER)
+    heading.append(title_widget)
+    copy = button('Copy', lambda *_: on_copy(), icon='edit-copy-symbolic')
+    copy.set_tooltip_text('Copy this text')
+    copy.add_css_class('copy-message')
+    heading.append(copy)
+    return heading
+
+
+def activity_card(who, text, on_copy=None):
     from .experience import activity_summary
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     box.add_css_class('tool-card')
     if who == 'ERROR':box.add_css_class('error-card')
     title, explanation = activity_summary(who,text)
-    box.append(label(title,'step-title',wrap=True))
+    heading = label(title,'step-title',wrap=True)
+    if on_copy is None:box.append(heading)
+    else:box.append(copy_heading(heading, lambda: on_copy(title+'\n'+explanation+'\n\n'+text, 'This step')))
     detail=label(explanation,'muted',wrap=True,selectable=True)
     detail.set_wrap_mode(Pango.WrapMode.WORD_CHAR);box.append(detail)
     expander=Gtk.Expander(label='Technical details')

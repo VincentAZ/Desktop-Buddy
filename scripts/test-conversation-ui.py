@@ -97,9 +97,28 @@ def tick():
             image.parent.mkdir(parents=True, exist_ok=True)
             Image.new('RGB', (320, 120), (49, 94, 78)).save(image)
             app.store.add_message(cid, {'role': 'user', 'content': 'Saved visual observation', 'images': [str(image)]})
+            app.store.add_message(cid, {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'c1', 'name': 'run_tool', 'arguments': {'name': 'fs.read', 'arguments': {'path': 'notes.txt'}}}]})
+            app.store.add_message(cid, {'role': 'tool', 'name': 'run_tool', 'tool_call_id': 'c1', 'content': '{"untrusted_tool_result": {"content": "hello from notes"}}', 'error': False})
+            app.store.add_message(cid, {'role': 'assistant', 'content': 'The file says hello from notes.'})
             app.render_history()
             assert any(isinstance(w, Gtk.Picture) for w in widgets(app.transcript))
             result['historical_screenshot_rendered'] = True
+            # Every message and every step offers a visible, plain "Copy" button.
+            # (A collapsed expander keeps its child out of the widget tree.)
+            for w in list(widgets(app.transcript)):
+                if isinstance(w, Gtk.Expander):w.set_expanded(True)
+            copies = [w for w in widgets(app.transcript) if isinstance(w, Gtk.Button) and 'copy-message' in w.get_css_classes()]
+            assert len(copies) == 5, len(copies)  # 2 user messages, 1 step, 1 result, 1 reply
+            copies[-1].emit('clicked')
+            assert app.status.get_text().startswith('Buddy’s reply copied'), app.status.get_text()
+            assert app.copy_menu.get_tooltip_text() == 'Copy conversation'
+            plain = app.copy_conversation()
+            assert 'hello from notes.' in plain and 'fs.read' not in plain
+            full = app.copy_conversation(everything=True)
+            assert full.index('You: Conversation lifecycle test') < full.index('[Image: ') < full.index('Desktop Buddy asked for a step:') < full.index('Step result (run_tool):') < full.index('Desktop Buddy: The file says'), full
+            assert '"fs.read"' in full and 'hello from notes' in full
+            assert app.status.get_text().startswith('Everything in this conversation copied'), app.status.get_text()
+            result['copy_buttons_and_copy_everything'] = True
             task = app.store.task(cid, {})
             app.store.audit(task, 'test', {'safe': True})
             app.store.checkpoint(task, cid, 'complete', {})

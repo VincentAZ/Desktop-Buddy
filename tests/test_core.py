@@ -248,6 +248,29 @@ def tool_answer(name,args,ident):
 def final(text='Verified done'):return {'role':'assistant','content':text,'tool_calls':[]}
 
 class AgentTests(Sandbox):
+    def test_reply_cut_at_response_limit_is_retried_with_a_note_then_fails_plainly(self):
+        from desktop_buddy.providers import OutputLimitReached
+        class CutOff(ScriptedProvider):
+            def __init__(self,script):super().__init__(script);self.seen=[]
+            def complete(self,messages,*args):
+                self.seen.append(copy.deepcopy(messages));item=next(self.script)
+                if isinstance(item,Exception):raise item
+                return item,{'input_tokens':3,'output_tokens':5}
+        provider=CutOff([OutputLimitReached(4096),final('Wrote it in two parts')])
+        agent=Agent(self.store,self.registry(),provider);cid=self.store.conversation()
+        self.assertEqual(agent.run(cid,'Write a long file'),'Wrote it in two parts')
+        note=provider.seen[1][-1];self.assertEqual(note['role'],'user')
+        self.assertIn('4,096 tokens',note['content']);self.assertIn('smaller steps',note['content'])
+        self.assertEqual([m['role'] for m in self.store.messages(cid)],['user','assistant'])  # the host note is not saved as if the person wrote it
+        events=[json.loads(r['body']) for r in self.store.audits(self.store.tasks(cid)[0]['id']) if r['event']=='output_limit']
+        self.assertEqual(events,[{'limit':4096,'attempt':1}])
+        provider=CutOff([OutputLimitReached(4096)]*3+[final('never reached')])
+        agent=Agent(self.store,self.registry(),provider);cid=self.store.conversation()
+        self.assertEqual(agent.run(cid,'Write a long file'),'')
+        self.assertEqual(self.store.tasks(cid)[0]['status'],'failed');self.assertEqual(len(provider.seen),3)
+        error=next(json.loads(r['body']) for r in self.store.audits(self.store.tasks(cid)[0]['id']) if r['event']=='task_error')
+        self.assertIn('response limit of 4,096 tokens',error['error'])
+
     def test_command_needs_purpose_before_host_approval_or_execution(self):
         provider=ScriptedProvider([tool_answer('shell.run',{'argv':['touch','unexpected']},'1'),final('Needs explanation')])
         registry=self.registry();registry.policy.approve=Mock(return_value=True)

@@ -7,7 +7,7 @@ import threading
 from collections import Counter
 from pathlib import Path
 from .security import Cancelled, Denied, StopToken, InvalidArguments
-from .providers import ProviderError
+from .providers import ProviderError,OutputLimitReached
 
 ENVELOPES=[
  {'name':'discover_tools','description':'Find tools by keyword (attachments, Excel, files, desktop, browser, shell, ComfyUI, memory, skills, task). Returns exact input schemas. Discover before invoking an unfamiliar tool.',
@@ -53,6 +53,10 @@ def estimate_tokens(items):
     """Conservative UTF-8 text estimate plus a reserve for each retained image."""
     return (-(-len(json.dumps(items,ensure_ascii=False).encode())//BYTES_PER_TOKEN)
             + IMAGE_TOKENS*sum(len(m.get('images',[])) for m in items))
+
+
+# Retries after a reply hits the response limit before the task is reported as failed.
+MAX_CUTOFFS=2
 
 
 def request_budget(config):
@@ -372,7 +376,7 @@ class Agent:
             if not c.use_vision:
                 for message in messages:
                     if message.pop('images',None):message['content']=message.get('content','')+' [Historical image omitted: current model has no vision.]'
-            failures=Counter()
+            failures=Counter();cutoffs=0
             self.registry.progress=lambda text:self.event('status',text)
             self.registry.attention=lambda text:self.event('attention',text)
             for turn in range(self.max_rounds):
@@ -394,7 +398,16 @@ class Agent:
                     self.store.audit(tid,'source_retry',{'operations':[call['arguments']['name'] for call in replay]})
                     self.event('status','Checking the step that failed earlier…')
                 else:
-                    answer,usage=self.provider.complete(request,ENVELOPES if c.use_tools else [],self.token,provider_event,policy.local_only)
+                    try:answer,usage=self.provider.complete(request,ENVELOPES if c.use_tools else [],self.token,provider_event,policy.local_only)
+                    except OutputLimitReached as e:
+                        # The reply (often one tool call writing a whole file) did not fit the
+                        # response limit. Nothing ran. Tell the model and let it split the work.
+                        cutoffs+=1
+                        self.store.audit(tid,'output_limit',{'limit':e.limit,'attempt':cutoffs})
+                        if cutoffs>MAX_CUTOFFS:raise
+                        self.event('status','Buddy’s reply was too long to finish · trying again in smaller steps…')
+                        messages.append({'role':'user','content':f'Note from Desktop Buddy (host): your previous reply exceeded the response limit of {e.limit:,} tokens and was discarded; nothing was executed. Continue in smaller steps that each fit well under the limit: create long files in parts (write the first part, then add the rest with further steps), keep reasoning brief, and avoid repeating content you already have.'})
+                        continue
                 self.token.check()
                 answer=self.store.redactor.clean(answer)
                 calls=answer.get('tool_calls',[])

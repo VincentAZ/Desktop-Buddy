@@ -564,7 +564,7 @@ class BuddyApp(Gtk.Application):
         if getattr(self,'welcome_card',None):
             self.transcript.remove(self.welcome_card);self.welcome_card=None
         text=self.redactor.text(text if isinstance(text,str) else json.dumps(text,ensure_ascii=False))
-        card=message_card(who,text,self.copy_text) if who in ('YOU','USER','ASSISTANT','BUDDY') else activity_card(who,text)
+        card=message_card(who,text,self.copy_text) if who in ('YOU','USER','ASSISTANT','BUDDY') else activity_card(who,text,self.copy_text)
         if who=='ERROR':
             from .experience import friendly_error
             guidance=friendly_error(text)[1]
@@ -614,16 +614,25 @@ class BuddyApp(Gtk.Application):
         self.status.remove_css_class('attention');self.status.set_text(f'{what} copied. Paste it anywhere with Ctrl+V.')
         return text
 
-    def copy_conversation(self,role=None):
-        """Copy every message, or only yours / only Buddy's, as plain text."""
+    def copy_conversation(self,role=None,everything=False):
+        """Copy every message, or only yours / only Buddy's, as plain text. With
+        everything, the steps Buddy asked for and their results go in too, in the
+        order the model saw them: the whole saved context of this conversation."""
         parts=[]
         for m in self.store.messages(self.cid):
-            if m.get('role') not in ('user','assistant') or not m.get('content'):continue
-            if role and m['role']!=role:continue
-            parts.append(('You: ' if m['role']=='user' else 'Desktop Buddy: ')+self.redactor.text(m['content']))
+            kind=m.get('role')
+            if kind=='user' and m.get('content') and role in (None,'user'):parts.append('You: '+self.redactor.text(m['content']))
+            elif kind=='assistant' and m.get('content') and role in (None,'assistant'):parts.append('Desktop Buddy: '+self.redactor.text(m['content']))
+            if not everything:continue
+            for image in m.get('images',[]):parts.append('[Image: '+self.redactor.text(str(image))+']')
+            for file in m.get('files',[]):parts.append('[Attached file: '+self.redactor.text(file.get('name',''))+']')
+            if kind=='assistant' and m.get('tool_calls'):
+                parts.append('Desktop Buddy asked for a step:\n'+self.redactor.text(json.dumps(m['tool_calls'],ensure_ascii=False,indent=2)))
+            elif kind=='tool' and m.get('content'):
+                parts.append(('Step failed' if m.get('error') else 'Step result')+' ('+self.redactor.text(str(m.get('name','')))+'):\n'+self.redactor.text(m['content']))
         if not parts:
             self.status.set_text('Nothing to copy yet.' if role is None else 'No messages from you yet.' if role=='user' else 'No replies from Buddy yet.');return ''
-        what='Whole conversation' if role is None else 'Your messages' if role=='user' else 'Buddy’s replies'
+        what='Everything in this conversation' if everything else 'Whole conversation' if role is None else 'Your messages' if role=='user' else 'Buddy’s replies'
         return self.copy_text('\n\n'.join(parts),what)
 
     def scroll_end(self):

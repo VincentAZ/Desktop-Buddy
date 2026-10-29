@@ -14,6 +14,14 @@ class ProviderError(Exception):
     pass
 
 
+class OutputLimitReached(ProviderError):
+    """The model hit the configured response limit mid-reply. Partial text and
+    tool calls were discarded, so nothing ran; the agent can retry in smaller steps."""
+    def __init__(self,limit):
+        self.limit=limit
+        super().__init__(f'The reply was cut off at the response limit of {limit:,} tokens; nothing was executed.')
+
+
 def sse(lines):
     """SSE framing: comments, multiline data, UTF-8, and final unterminated event."""
     data=[]
@@ -286,6 +294,8 @@ class Provider:
             if c.protocol=='responses':
                 typ=event.get('type','')
                 if typ=='response.output_text.delta':delta=event.get('delta','')
+                if typ=='response.incomplete' and event.get('response',{}).get('incomplete_details',{}).get('reason')=='max_output_tokens':
+                    raise OutputLimitReached(c.max_output)
                 if typ in ('response.failed','response.incomplete','error'):
                     raise ProviderError('Provider did not complete the response. Increase output limit or check model/service status.')
                 if typ=='response.completed':
@@ -308,8 +318,9 @@ class Provider:
                     elif dt=='signature_delta':b['signature']=b.get('signature','')+d['signature']
                 elif typ=='message_delta':
                     usage.update(event.get('usage',{}))
-                    if event.get('delta',{}).get('stop_reason') in ('max_tokens','refusal'):
-                        raise ProviderError('Claude stopped before completion or refused this request; no tool calls executed.')
+                    stop=event.get('delta',{}).get('stop_reason')
+                    if stop=='max_tokens':raise OutputLimitReached(c.max_output)
+                    if stop=='refusal':raise ProviderError('Claude declined this request; nothing was executed.')
                 elif typ=='message_stop':finished=True
             elif c.protocol=='ollama':
                 m=event.get('message',{});delta=m.get('content','');reasoning+=m.get('thinking','')
@@ -317,7 +328,7 @@ class Provider:
                     cid=tc.get('id') or uuid.uuid4().hex
                     calls[cid]={'id':cid,'name':tc['function']['name'],'arguments':parse_arguments(tc['function']['arguments'])}
                 if event.get('done'):
-                    if event.get('done_reason')=='length':raise ProviderError('Model output limit reached; partial actions discarded.')
+                    if event.get('done_reason')=='length':raise OutputLimitReached(c.max_output)
                     usage={'input_tokens':event.get('prompt_eval_count',0),'output_tokens':event.get('eval_count',0)};finished=True
             else:
                 if event.get('usage'):
@@ -332,7 +343,8 @@ class Provider:
                         if tc.get('id'):call['id']+=tc['id']
                         f=tc.get('function',{});call['name']+=f.get('name','');call['arguments']+=f.get('arguments','')
                     stop=choice.get('finish_reason')
-                    if stop in ('length','content_filter'):raise ProviderError('Model output was truncated/filtered; partial actions discarded.')
+                    if stop=='length':raise OutputLimitReached(c.max_output)
+                    if stop=='content_filter':raise ProviderError('Model output was filtered by the service; partial actions discarded.')
                     if stop:finished=True
             if delta:
                 text+=delta

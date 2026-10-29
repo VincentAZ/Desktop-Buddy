@@ -18,7 +18,7 @@
 Desktop Buddy is built for people who want results, not an agent control panel. IT sets up the assistant; Jane describes the outcome and follows the work in a normal conversation. It runs as a standalone GTK app with local history, clear activity records, real cancellation, and three plain-language control modes.
 
 > [!NOTE]
-> Desktop Buddy targets Ubuntu 26.04 with GNOME Wayland. Version 0.4.9: Buddy can change its own code and README when allowed (edit, test, commit with a new version, push to GitHub, restart), on top of one-click app connections for 26 services plus any pasted server address, a real "Just do it" mode, screenshot-based control of apps that expose no accessibility information, and an optional background browser. See [what is verified and what is not](docs/DELIVERY.md).
+> Desktop Buddy targets Ubuntu 26.04 with GNOME Wayland. Version 0.4.10: a Copy button on every message and step, a Copy menu that can copy the whole conversation including work details, and replies that hit the response limit are retried in smaller steps instead of failing the task (cloud models now default to a 16k reply limit). Since 0.4.9 Buddy can change its own code and README when allowed (edit, test, commit with a new version, push to GitHub, restart), on top of one-click app connections for 26 services plus any pasted server address, a real "Just do it" mode, screenshot-based control of apps that expose no accessibility information, and an optional background browser. See [what is verified and what is not](docs/DELIVERY.md).
 
 ## Why it feels different
 

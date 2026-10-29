@@ -29,6 +29,15 @@ CLOUD_CONTEXT = 128000
 def default_context(local):
     return LOCAL_CONTEXT if local else CLOUD_CONTEXT
 
+# A reply that writes a whole file, plus the thinking that precedes it, does not
+# fit in 4k tokens; cloud models all allow far more. Local servers stay small.
+LOCAL_OUTPUT = 4096
+CLOUD_OUTPUT = 16384
+
+
+def default_output(local):
+    return LOCAL_OUTPUT if local else CLOUD_OUTPUT
+
 # The wire value is stored with each model profile. Titles are the plain words
 # shown in the app; the hint says what the level means in everyday terms.
 # "Default" omits the parameter, which is safest until a model's supported
@@ -219,6 +228,18 @@ class Store:
                             config['context_tokens'] = CLOUD_CONTEXT
                     self.set(key, values)
                 self.set('capability_schema', 3)
+        # Version 3 gave cloud models a 4k reply limit, which cut off replies that
+        # wrote a file (v0.4.9 "could not finish this step"). Raise only values still
+        # at that default; explicit choices stay.
+        if self.get('capability_schema', 1) < 4:
+            with self.lock, self.db:
+                for key in ('providers', 'model_profiles'):
+                    values = self.get(key, {})
+                    for config in values.values():
+                        if not config.get('local') and config.get('max_output') == LOCAL_OUTPUT and config.get('context_tokens', 0) > 2*CLOUD_OUTPUT:
+                            config['max_output'] = CLOUD_OUTPUT
+                    self.set(key, values)
+                self.set('capability_schema', 4)
         if self.get('log_schema', 1) < 2:self.scrub_logs()
 
     def scrub_logs(self):
@@ -247,7 +268,7 @@ class Store:
 
     def configs(self):
         saved=self.get('providers',{})
-        return {k:ProviderConfig(**saved[k]) if k in saved else ProviderConfig(k,v[1],v[2],v[3],context_tokens=default_context(v[3])) for k,v in PROVIDERS.items()}
+        return {k:ProviderConfig(**saved[k]) if k in saved else ProviderConfig(k,v[1],v[2],v[3],context_tokens=default_context(v[3]),max_output=default_output(v[3])) for k,v in PROVIDERS.items()}
 
     def save_config(self,config):
         config.validate()
