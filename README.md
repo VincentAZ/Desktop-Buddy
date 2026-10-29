@@ -158,3 +158,9 @@ The suite covers provider protocols, tools, cancellations, credentials, conversa
 - [Implementation plan](docs/PLAN.md)
 
 Built for a Linux desktop where the assistant should explain itself clearly, act decisively, and stay out of the way.
+
+## License
+
+The original application code is free and open source under the [MIT License](LICENSE), copyright © 2026 Vincent Serpico. Use it, modify it, redistribute it, or build a business with it; keep the copyright and permission notice with copies or substantial portions of the code.
+
+Third-party libraries, models, assets, and connected services retain their own licenses and terms. The MIT grant covers Desktop Buddy's original code and does not relicense those materials or services.

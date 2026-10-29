@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "desktop-buddy"
 version = "0.4.5"
 description = "A single-agent, provider-independent Linux desktop assistant"
+license = {file = "LICENSE"}
 requires-python = ">=3.11"
 dependencies = ["requests>=2.31", "Pillow>=10", "openpyxl>=3.1,<4", "python-docx>=1.2,<2", "pypdf>=6,<7", "mcp==2.3.0", "jsonschema>=4.20,<5"]
 
