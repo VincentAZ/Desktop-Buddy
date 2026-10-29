@@ -119,6 +119,12 @@ def tick():
             assert '"fs.read"' in full and 'hello from notes' in full
             assert app.status.get_text().startswith('Everything in this conversation copied'), app.status.get_text()
             result['copy_buttons_and_copy_everything'] = True
+            seen = app.copy_context_window()
+            assert seen.startswith('What Buddy sees right now'), seen[:120]
+            assert seen.index('=== Buddy’s instructions to the AI ===') < seen.index('=== You ===') < seen.index('=== Desktop Buddy asked for a step ===') < seen.index('=== Step result (run_tool) ===') < seen.index('=== Desktop Buddy ===\nThe file says'), seen
+            assert 'Conversation lifecycle test' in seen and '"fs.read"' in seen and 'hello from notes' in seen and 'Size: about ' in seen
+            assert app.status.get_text().startswith('What Buddy sees copied'), app.status.get_text()
+            result['copy_context_window'] = True
             task = app.store.task(cid, {})
             app.store.audit(task, 'test', {'safe': True})
             app.store.checkpoint(task, cid, 'complete', {})

@@ -68,6 +68,12 @@ TOPICS = {
         'conversations are still working, a Restart Buddy button appears instead. In Ask before acting each of these steps is '
         'confirmed; Just do it runs them without asking. Discuss only changes nothing, and Keep Buddy offline blocks publishing. '
         'Sign-in keys and git internals stay off limits.'),
+    'copy': ('Copy messages',
+        'Every message and step has a Copy button. The Copy button in the toolbar copies the whole conversation, '
+        'only your messages, only Buddy’s replies, or everything including the steps Buddy took and their results. '
+        'Copy what Buddy sees copies all messages in Buddy’s context window: the instructions, messages and step results '
+        'that would go to the AI service at the next step, after any shortening to fit, with how much room they use. '
+        'Nothing is sent anywhere. Paste with Ctrl+V.'),
     'history': ('History and preferences',
         'Conversations in the sidebar can be searched, reopened, renamed or deleted; everything is stored on this computer. '
         'Things to remember holds preferences you want Buddy to keep. When you use an online assistant, the conversation and '

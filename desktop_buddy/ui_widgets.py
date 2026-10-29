@@ -52,8 +52,15 @@ def icon_button(icon, tooltip, callback):
     return widget
 
 
-def menu_button(icon, tooltip, actions):
-    widget = Gtk.MenuButton(icon_name=icon)
+def menu_button(icon, tooltip, actions, text=None):
+    """An icon menu button, or with text a labelled one: people looking for a way to
+    copy did not find a bare icon."""
+    widget = Gtk.MenuButton(icon_name=icon) if text is None else Gtk.MenuButton()
+    if text is not None:
+        row = Gtk.Box(spacing=6)
+        row.append(Gtk.Image.new_from_icon_name(icon))
+        row.append(label(text))
+        widget.set_child(row)
     widget.set_tooltip_text(tooltip)
     widget.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
     widget.add_css_class('flat')
@@ -229,9 +236,10 @@ def build_workspace(app, providers, text_view, default_workspace):
     app.copy_menu = menu_button('edit-copy-symbolic', 'Copy conversation', [
         ('Copy whole conversation', app.copy_conversation),
         ('Copy everything, including work details', lambda: app.copy_conversation(everything=True)),
+        ('Copy what Buddy sees (all messages in its context window)', app.copy_context_window),
         ('Copy only my messages', lambda: app.copy_conversation('user')),
         ('Copy only Buddy’s replies', lambda: app.copy_conversation('assistant')),
-    ])
+    ], text='Copy')
     toolbar.append(app.copy_menu)
     toolbar.append(menu_button('view-more-symbolic', 'Conversation options', [
         ('Rename conversation', app.rename_conversation_dialog),

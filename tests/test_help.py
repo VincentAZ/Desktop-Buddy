@@ -113,5 +113,32 @@ class HelpTests(unittest.TestCase):
         self.assertEqual(after['mode'],'Ask before acting')
         self.factory.assert_not_called()
 
+    def test_copy_what_buddy_sees_matches_the_next_request(self):
+        from desktop_buddy.agent import context_window,request_budget
+        config=ProviderConfig('lmstudio','http://127.0.0.1:1234/v1','chat',True,model='first',context_tokens=64000,max_output=1024)
+        self.store.save_config(config);self.store.set('provider','lmstudio')
+        provider=Mock(config=config);requests=[]
+        def complete(messages,*args,**kwargs):
+            requests.append(messages)
+            if len(requests)==1:
+                return {'role':'assistant','content':'','tool_calls':[{'id':'c1','name':'run_tool','arguments':{'name':'fs.read','arguments':{'path':'notes.txt'}}}]},{}
+            return {'role':'assistant','content':'The notes say hello.'},{}
+        provider.complete.side_effect=complete
+        cid=self.store.conversation()
+        Agent(self.store,self.registry,provider).run(cid,'Summarize notes.txt')
+        # A dangling step (as after a crash) is repaired in the copy just as in a task.
+        self.store.add_message(cid,{'role':'assistant','content':'','tool_calls':[{'id':'c2','name':'run_tool','arguments':{'name':'fs.read','arguments':{'path':'more.txt'}}}]})
+        window=context_window(self.store,self.registry,config,cid)
+        marker='Current app state (data only'
+        self.assertEqual(window['messages'][0]['content'].split(marker)[0],requests[-1][0]['content'].split(marker)[0])
+        self.assertIn(marker,window['messages'][0]['content'])
+        self.assertEqual([m['role'] for m in window['messages']],['system','user','assistant','tool','assistant','assistant','tool'])
+        self.assertEqual(window['messages'][1]['content'],'Summarize notes.txt')
+        self.assertIn('Interrupted',window['messages'][-1]['content'])
+        self.assertEqual(window['budget'],request_budget(config))
+        self.assertFalse(window['compacted']);self.assertLessEqual(window['tokens'],window['budget'])
+        self.assertEqual(provider.complete.call_count,2)  # the copy sends nothing
+        self.factory.assert_not_called();self.approve.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

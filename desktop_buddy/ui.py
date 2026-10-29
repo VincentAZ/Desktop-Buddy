@@ -635,6 +635,42 @@ class BuddyApp(Gtk.Application):
         what='Everything in this conversation' if everything else 'Whole conversation' if role is None else 'Your messages' if role=='user' else 'Buddy’s replies'
         return self.copy_text('\n\n'.join(parts),what)
 
+    def copy_context_window(self):
+        """Copy every message in Buddy's context window: exactly what the AI service
+        would be sent at the next step of this conversation (Buddy's instructions, the
+        saved messages after the same shortening a task applies, step results) and
+        how much of the context limit it uses. Nothing is sent anywhere."""
+        from .agent import context_window
+        from .selfdev import SETTING as SELF_UPDATE
+        from .paths import source_root
+        from .experience import friendly_error
+        try:
+            config=self.store.configs()[self.selected_id()]
+            self_update=bool(self.store.get(SELF_UPDATE,False)) and source_root() is not None
+            policy=Policy(Path(self.workspace.get_text()).expanduser(),self.selected_mode(),self.local.get_active(),self.approve,
+                          protected=[self.store.root]+([] if self_update else [Path(__file__).parent]),source_root=source_root() if self_update else None)
+            registry=Registry(policy,self.store,self.desktop,self.a11y,self.clipboard,None,self.mcp)
+            window=context_window(self.store,registry,config,self.cid)
+        except Exception as error:
+            self.status.set_text('Buddy could not gather what it sees. '+friendly_error(str(error))[0]);return ''
+        head=[f'What Buddy sees right now: all messages in its context window, as they would go to {PROVIDERS[config.id][0]} ({config.model or "no model chosen yet"}) at the next step of this conversation.',
+              f'Size: about {window["tokens"]:,} tokens of {window["budget"]:,} available (context limit {window["context_tokens"]:,}, reply limit {window["max_output"]:,}).']
+        if window['compacted']:head.append('Earlier messages were shortened to fit, exactly as they would be for the model. The full conversation stays saved on this computer.')
+        if window['note']:head.append('Warning: '+window['note'])
+        parts=['\n'.join(head)]
+        for m in window['messages']:
+            role=m.get('role');text=self.redactor.text(m.get('content') or '')
+            if role=='system':parts.append('=== Buddy’s instructions to the AI ===\n'+text)
+            elif role=='user':
+                title='Summary of earlier messages (made by Buddy to save room)' if text.startswith('[UNTRUSTED ARCHIVED CONTEXT') else 'You'
+                parts.append(f'=== {title} ===\n'+text+''.join('\n[Image: '+self.redactor.text(str(image))+']' for image in m.get('images',[])))
+            elif role=='assistant':
+                if text:parts.append('=== Desktop Buddy ===\n'+text)
+                if m.get('tool_calls'):parts.append('=== Desktop Buddy asked for a step ===\n'+self.redactor.text(json.dumps(m['tool_calls'],ensure_ascii=False,indent=2)))
+            elif role=='tool':
+                parts.append(('=== Step failed' if m.get('error') else '=== Step result')+' ('+self.redactor.text(str(m.get('name','')))+') ===\n'+text)
+        return self.copy_text('\n\n'.join(parts),'What Buddy sees')
+
     def scroll_end(self):
         a=self.transcript_scroll.get_vadjustment();a.set_value(max(0,a.get_upper()-a.get_page_size()))
         # Setting a value the adjustment already holds emits nothing, so the viewport
