@@ -87,6 +87,7 @@ class BuddyApp(Gtk.Application):
         self.cid=None;self.sessions={};self.desktop_lease=DesktopLease()
         self.pending=[];self.desktop=None;self.a11y=None;self.aux_tokens=[]
         self.emergency_latched=False;self.window_handle='';self.task_usage={}
+        self.stop_cleanup_pending=False
         self.connect('activate',self.activate)
         stop=Gio.SimpleAction.new('emergency',None);stop.connect('activate',lambda *_:self.emergency('the Ctrl+Shift+Escape shortcut'));self.add_action(stop)
         new=Gio.SimpleAction.new('new-conversation',None);new.connect('activate',lambda *_:self.new_conversation());self.add_action(new)
@@ -638,6 +639,8 @@ class BuddyApp(Gtk.Application):
     def session_event(self,cid,generation,name,data):
         session=self.sessions.get(cid)
         if session is None or session.generation!=generation:return False
+        # Progress already queued by a cancelled worker must not cover up Stop.
+        if session.start_token.event.is_set() and name!='done':return False
         if name=='stream':session.stream=str(data)
         elif name=='screenshot':session.preview_path=str(data)
         elif name=='message':session.last_reply=data['content'];session.stream=''
@@ -666,7 +669,41 @@ class BuddyApp(Gtk.Application):
             title=next((r['title'] for r in self.store.conversations() if r['id']==cid),'Conversation')
             self.notify(title,session.status)
         if name in ('done','attention','error'):self.refresh_history()
+        if name=='done':
+            agent=session.agent;selfdev=getattr(getattr(agent,'registry',None),'selfdev',None)
+            self.refresh_restart_bar()
+            if selfdev is not None and selfdev.restart_requested:self.restart_app()
         return False
+
+    def refresh_restart_bar(self):
+        """Offer a restart when the files on disk differ from the code this process loaded."""
+        if not hasattr(self,'restart_bar'):return
+        from .selfdev import restart_needed
+        needed=restart_needed()
+        if needed:
+            busy=any(s.running for s in self.sessions.values())
+            self.restart_label.set_text('Buddy’s code has changed. Restart to use the new version.'+(' Wait for the other conversations to finish first.' if busy else ''))
+        self.restart_bar.set_visible(needed)
+
+    def restart_app(self,*_):
+        """Start a fresh Buddy on the new code once no conversation is working. The
+        new process waits for this one to exit so GTK does not hand it to the old instance."""
+        from .paths import source_root
+        root=source_root()
+        if root is None:return False
+        if any(s.running for s in self.sessions.values()):
+            self.restart_label.set_text('Buddy’s code has changed. Restart when the other conversations finish.')
+            self.restart_bar.set_visible(True);return False
+        import os,subprocess
+        script=f'while kill -0 {os.getpid()} 2>/dev/null; do sleep 0.2; done; exec "$0"'
+        subprocess.Popen(['bash','-c',script,str(root/'launch.sh')],cwd=root,stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+        self.store.audit('','self_restart',{'version_on_disk':self.version_on_disk()})
+        self.close_requested();return False
+
+    def version_on_disk(self):
+        from .selfdev import SelfDev
+        return SelfDev(self.store,None).source_version()
 
     def on_event(self,name,data):
         if name=='status':self.status.remove_css_class('attention');self.status.set_text(self.redactor.text(str(data)))
@@ -820,6 +857,8 @@ class BuddyApp(Gtk.Application):
             GLib.idle_add(cleanup)
 
     def send(self,prompt=None,*,resume=False):
+        if self.stop_cleanup_pending:
+            self.status.set_text('Stopping · closing computer control and app connections…');return
         prompt=prompt or content(self.input).strip()
         if not prompt:
             if self.pending_images or self.pending_files:self.notice('Tell Buddy what you would like to do with the attached file, then choose Send.')
@@ -828,6 +867,7 @@ class BuddyApp(Gtk.Application):
         self.stop_source=None;self.saved_followup=False
         if self.emergency_latched:
             self.emergency_latched=False;self.status.set_text('Starting a new request. Computer access may need to be allowed again.')
+            self.stop_button.set_label('Stop everything')
         self.save_preferences();config=self.store.configs()[self.selected_id()]
         if not config.model:self.settings_dialog();return
         if self.local.get_active() and not config.local:self.notice('Buddy is offline. Open Settings and turn off Keep Buddy offline to use your online assistant.');return
@@ -870,7 +910,13 @@ class BuddyApp(Gtk.Application):
             try:
                 session.start_token.check()
                 key=self.credentials.get(config.id)
-                policy=Policy(workspace,mode,local,self.approve,protected=[self.store.root,Path(__file__).parent])
+                # The person may let Buddy change its own code (Settings → IT setup).
+                # Otherwise the package directory stays off limits to every tool.
+                from .selfdev import SETTING as SELF_UPDATE
+                from .paths import source_root
+                self_update=bool(self.store.get(SELF_UPDATE,False)) and source_root() is not None
+                policy=Policy(workspace,mode,local,self.approve,protected=[self.store.root]+([] if self_update else [Path(__file__).parent]),
+                              source_root=source_root() if self_update else None)
                 registry=Registry(policy,self.store,self.desktop,self.a11y,self.clipboard,session.browser,manager)
                 registry.desktop_lease=self.desktop_lease
                 session.start_token.check()
@@ -920,10 +966,10 @@ class BuddyApp(Gtk.Application):
 
     def stop_session(self,session,source):
         session.stop_source=source
-        if session.running:
-            self.store.audit(getattr(session.agent,'task_id',None) or 'ui','stopped',{'by':source})
         session.start_token.stop()
         if session.agent:session.agent.stop()
+        if session.running:
+            self.store.audit(getattr(session.agent,'task_id',None) or 'ui','stopped',{'by':source})
         for done,dialog,token in list(self.pending):
             if token is session.start_token:done.set();dialog.destroy()
         if session.running:session.status='Stopping… waiting for the current action to respond'
@@ -934,14 +980,41 @@ class BuddyApp(Gtk.Application):
 
     def emergency(self,source='the Stop everything button'):
         self.emergency_latched=True
-        for session in list(self.sessions.values()):
-            self.stop_session(session,source)
-            session.browser.close()
+        sessions=list(self.sessions.values())
+        # Revoke every task before waiting for any resource to shut down.
+        for session in sessions:
+            session.start_token.stop()
+            if session.agent:session.agent.stop()
         for token in list(self.aux_tokens):token.stop()
+        for session in sessions:self.stop_session(session,source)
         for done,dialog,token in list(self.pending):done.set();dialog.destroy()
-        if self.desktop:threading.Thread(target=self.desktop.close,daemon=True).start()
-        self.mcp.close_all()
-        self.status.set_text('Stopped · computer control and app connections are closed')
+        self.stop_button.set_label('Stopped')
+        self.stream_scroll.set_visible(False)
+        self.status.set_text('Stopping · closing computer control and app connections…')
+        if self.stop_cleanup_pending:return
+        self.stop_cleanup_pending=True
+        closers=[session.browser.close for session in sessions]
+        if self.desktop:closers.append(self.desktop.close)
+        closers.append(self.mcp.close_all)
+        errors=[];remaining=[len(closers)];lock=threading.Lock()
+        def finished():
+            self.stop_cleanup_pending=False
+            if self.emergency_latched:
+                message=('Stopped · some connections could not be closed; see Recent activity' if errors else
+                         'Stopped · computer control and app connections are closed')
+                self.current_session.status=message;self.status.set_text(message)
+            return False
+        def close_resource(close):
+            try:close()
+            except Exception as error:
+                errors.append(str(error))
+                self.store.audit('ui','stop_cleanup_error',{'error':str(error)})
+            finally:
+                with lock:
+                    remaining[0]-=1
+                    if not remaining[0]:GLib.idle_add(finished)
+        for close in closers:
+            threading.Thread(target=close_resource,args=(close,),daemon=True,name='stop-cleanup').start()
 
     def auxiliary(self,func):
         token=StopToken();self.aux_tokens.append(token)

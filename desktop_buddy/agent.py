@@ -23,7 +23,8 @@ Use discover_tools and then run_tool. For shell.run include purpose in the run_t
 Controlling apps on this computer: desktop.accessibility lists windows, controls and their text; desktop.screenshot shows the real screen with its pixel size. Prefer desktop.set_text (verified text replacement) and desktop.accessible_action when the control is listed, because they are checked and need no screen sharing. When the app exposes nothing useful (custom canvases, games, some Electron or Java apps), work visually: take a screenshot, then call desktop.input without target fields, giving click/drag positions as pixel coordinates in that screenshot (coordinates="screenshot"), or type text and press keys. Buddy connects screen sharing itself when the computer remembered the permission; otherwise the person sees a GNOME dialog and clicks Share. After acting, take a new screenshot or re-inspect to confirm the result before moving on. Sending input is not proof of success. Do not request screenshots if this model lacks vision; accessibility provides text observations instead.
 Make a concise plan for multi-step tasks and record task.checkpoint after meaningful progress. Recover from ordinary tool errors with a different justified action; avoid repeating a failing call. Report partial completion honestly. Do not fabricate observations. The host may deny a tool; never work around a denial with another route.
 Be efficient: trust state you already observed in this task and re-inspect only after something changed; verify each effect once, not every step. Installing or removing software needs administrator rights: run it as ["pkexec", ...] so the person gets the GNOME authentication dialog (never ask for a password), give downloads and installs a timeout of 1800 seconds or more, and wait for the command to finish instead of polling.
-For long tasks load the appropriate skill on demand (skills.list once, not every step). Do not store long-term memory unless it is useful and approved. Reasoning is private; provide concise progress and results, not internal chain-of-thought.'''
+For long tasks load the appropriate skill on demand (skills.list once, not every step). Do not store long-term memory unless it is useful and approved. Reasoning is private; provide concise progress and results, not internal chain-of-thought.
+Buddy’s own code and documentation: when asked to change, fix or improve Buddy itself, or to change its README or docs, call self.status first. If it reports enabled, load the self-improve skill and follow it on the main branch: read the checkout with fs.read, edit with fs.write, and for code changes raise the version and make self.check pass; then self.commit, self.push, and for code changes self.restart. README and docs changes need no version bump or test run. If it is not enabled, say that the person can turn it on under Settings → IT setup → Let Buddy change its own code; never edit Buddy’s files or run git through shell.run instead.'''
 
 
 BYTES_PER_TOKEN=3  # Deliberately low (JSON/paths tokenize densely); English prose runs ~4.
@@ -214,6 +215,8 @@ def tool_failed(name,result):
     if name in ('fs.write','fs.move','fs.delete','fs.mkdir','attachments.copy','desktop.set_text'):
         return result.get('verified') is False
     if name=='app.launch':return result.get('launched') is False
+    if name=='self.check':return result.get('passed') is False
+    if name=='self.push':return result.get('pushed') is False
     if name=='desktop.accessible_action':return result.get('accepted') is False
     if name in ('desktop.input','desktop.window','browser.action'):return result.get('sent') is False
     return False

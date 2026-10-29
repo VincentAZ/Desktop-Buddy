@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "desktop-buddy"
-version = "0.4.5"
+version = "0.4.9"
 description = "A single-agent, provider-independent Linux desktop assistant"
 license = {file = "LICENSE"}
 requires-python = ">=3.11"

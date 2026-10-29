@@ -18,7 +18,7 @@
 Desktop Buddy is built for people who want results, not an agent control panel. IT sets up the assistant; Jane describes the outcome and follows the work in a normal conversation. It runs as a standalone GTK app with local history, clear activity records, real cancellation, and three plain-language control modes.
 
 > [!NOTE]
-> Desktop Buddy targets Ubuntu 26.04 with GNOME Wayland. Version 0.4.5: one-click app connections for 26 services plus any pasted server address, a real "Just do it" mode, screenshot-based control of apps that expose no accessibility information, and an optional background browser. See [what is verified and what is not](docs/DELIVERY.md).
+> Desktop Buddy targets Ubuntu 26.04 with GNOME Wayland. Version 0.4.9: Buddy can change its own code and README when allowed (edit, test, commit with a new version, push to GitHub, restart), on top of one-click app connections for 26 services plus any pasted server address, a real "Just do it" mode, screenshot-based control of apps that expose no accessibility information, and an optional background browser. See [what is verified and what is not](docs/DELIVERY.md).
 
 ## Why it feels different
 
@@ -30,6 +30,7 @@ Desktop Buddy is built for people who want results, not an agent control panel. 
 - **Local by default.** Conversations, tasks, preferences, memory, and audit records live in SQLite on your machine. API keys stay in GNOME Keyring.
 - **Concurrent conversations.** Start a new conversation while others keep working. Each has its own replies, drafts, task, browser profile and Stop button. Background requests for approval are marked in history.
 - **A stop button that means it.** Stop the current task or use **Stop everything** to cancel work, disconnect desktop control, and close Buddy's browser.
+- **It can improve itself.** Turn on **Settings → IT setup → Let Buddy change its own code** and ask in plain words. Buddy edits its source checkout or this README on `main`, runs the test suite for code changes, commits (code with a raised version number), pushes to GitHub with the computer's existing sign-in after picking up newer commits, and restarts on new code. Sign-in keys and git internals stay off limits; a code commit is refused until the tests pass on exactly the files being committed, and Buddy never force-pushes.
 
 ## Run the development build
 

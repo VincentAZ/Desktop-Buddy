@@ -65,6 +65,23 @@ class PreferencesDialog:
         keys.append(button('Import a registration file…',lambda *_:self.import_registrations()))
         self.registration_status=label('','status',wrap=True);keys.append(self.registration_status)
         advanced.append(keys)
+        own=section('Buddy’s own code')
+        from .paths import source_root
+        from .selfdev import SETTING as SELF_UPDATE
+        self.self_update=Gtk.CheckButton(label='Let Buddy change its own code')
+        checkout=source_root()
+        self.self_update.set_active(bool(app.store.get(SELF_UPDATE,False)) and checkout is not None)
+        self.self_update.set_sensitive(checkout is not None)
+        self.self_update.connect('toggled',lambda w:app.store.set(SELF_UPDATE,w.get_active()))
+        own.append(self.self_update)
+        if checkout is None:
+            own.append(label('Buddy is installed as a package rather than running from its source folder, so it cannot change its own code here.','muted',wrap=True))
+        else:
+            own.append(label('Buddy runs from '+str(checkout)+'. With this on, Buddy can read and edit its own program files when you ask, run its tests, '
+                             'save the change in git with a new version number, publish it to GitHub with the sign-in already on this computer, and restart itself. '
+                             'In Ask before acting each of these steps is confirmed; Just do it runs them without asking. Applies to the next task. '
+                             'Sign-in keys and git internals stay off limits.','muted',wrap=True))
+        advanced.append(own)
         advanced.append(button('Technical activity details',lambda *_:app.audit_dialog()))
         self.stack.add_named(scroller(advanced,minimum=240),'it')
         controls=Gtk.Box(spacing=10)

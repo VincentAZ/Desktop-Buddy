@@ -198,20 +198,25 @@ def _waiting_for_password(proc):
     except OSError:return False
 
 
-def run_process(argv,cwd,token,timeout=120,local_only=False,progress=None,attention=None):
+def run_process(argv,cwd,token,timeout=120,local_only=False,progress=None,attention=None,extra_env=None):
     """progress(text) is called about once per second while the command runs;
-    attention(text) once when the command is waiting for the person (a password box)."""
+    attention(text) once when the command is waiting for the person (a password box).
+    extra_env holds host-chosen variables for Buddy's own git and test runs; the
+    model never supplies it."""
     if not argv or not all(isinstance(x,str) and '\x00' not in x for x in argv):raise ValueError('argv must be a non-empty list of strings.')
     timeout=max(1,min(timeout,MAX_COMMAND_SECONDS))
     env={'PATH':os.environ.get('PATH',os.defpath),'LANG':'C.UTF-8','HOME':str(Path.home())}
     if not local_only:env.update({k:os.environ[k] for k in SESSION_ENV if k in os.environ})
+    env.update(extra_env or {})
     if local_only:
         if not shutil.which('bwrap'):raise Denied('Local-only shell requires bubblewrap. No unsandboxed fallback is allowed.')
         # Hide session sockets, user files and host process table. Only workspace writable.
         command=['bwrap','--die-with-parent','--new-session','--unshare-net','--unshare-pid','--unshare-ipc',
             '--ro-bind','/','/','--tmpfs','/home','--tmpfs','/root','--tmpfs','/run','--tmpfs','/tmp',
             '--dev','/dev','--proc','/proc','--bind',str(cwd),str(cwd),'--chdir',str(cwd),
-            '--clearenv','--setenv','PATH',os.defpath,'--setenv','LANG','C.UTF-8','--setenv','HOME',str(cwd),'--',*argv]
+            '--clearenv','--setenv','PATH',os.defpath,'--setenv','LANG','C.UTF-8','--setenv','HOME',str(cwd)]
+        for key,value in (extra_env or {}).items():command+=['--setenv',key,value]
+        command+=['--',*argv]
     else:command=argv
     token.check()
     start=time.monotonic();reported=start;password_prompt=argv[0]=='pkexec';alerted=False
@@ -247,6 +252,8 @@ class Registry:
         self.progress=lambda text:None  # The agent points this at the UI status line.
         self.attention=lambda text:None  # Red status + desktop notification, once per command.
         self.comfyui=ComfyUI(store.get('comfyui_url','http://127.0.0.1:8188'))
+        from .selfdev import SelfDev
+        self.selfdev=SelfDev(store,policy,assistant=lambda:self.assistant_config)
         self._register()
 
     def add(self,name,description,properties,required,handler,mutation=False,risk='read'):
@@ -298,6 +305,12 @@ class Registry:
         a('comfyui.run','Run an exported ComfyUI API workflow from the workspace, optionally override node inputs, wait for verified completion, and copy images into a workspace directory. One approval covers the complete job.',{'workflow_path':S,'overrides':{'type':'object','additionalProperties':True},'output_directory':S,'timeout':I},['workflow_path','output_directory'],self.comfyui_run,True,'compute')
         a('comfyui.run_batch','Run up to 50 prompt values through one exported ComfyUI API workflow. One approval covers the exact batch; every job is verified and outputs are copied into the workspace.',{'workflow_path':S,'prompt_node_id':S,'input_name':S,'prompts':{'type':'array','items':S},'overrides':{'type':'object','additionalProperties':True},'output_directory':S,'timeout_per_job':I},['workflow_path','prompt_node_id','input_name','prompts','output_directory'],self.comfyui_batch,True,'compute')
         a('comfyui.cancel','Cancel one ComfyUI job by UUID with approval.',{'prompt_id':S},['prompt_id'],lambda x,t:self.comfyui.cancel(x['prompt_id'],t),True,'compute')
+        a('self.status','Check whether Buddy may change its own code, and the state of its source checkout: running and source versions, branch, changed files, whether the last self.check is current. Call this first when asked to change, fix or improve Buddy itself.',{},[],lambda x,t:self.selfdev.status(x,t))
+        a('self.diff','Show the uncommitted changes in Buddy’s own code (diff against the last commit plus new files).',{},[],lambda x,t:self.selfdev.diff(x,t))
+        a('self.check','Compile Buddy’s code and run its tests: all of them, or named modules such as test_core. A code commit requires a passing check on the exact current files; takes about a minute. Not needed for README or docs changes.',{'modules':{'type':'array','items':S},'timeout':I},[],lambda x,t:self.selfdev.check(x,t),True,'self_update')
+        a('self.commit','Commit every change in Buddy’s checkout to the main branch with a plain-language message (first line at most 72 characters). Code changes need a current passing self.check and a raised version in desktop_buddy/__init__.py and pyproject.toml; README, docs and image changes need neither. Credential files are never committed.',{'message':S},['message'],lambda x,t:self.selfdev.commit(x,t),True,'self_update')
+        a('self.push','Push Buddy’s commits on main to GitHub (origin) using the sign-in already on this computer. Brings in newer commits from GitHub first; never force-pushes or rewrites history.',{},[],lambda x,t:self.selfdev.push(x,t),True,'network')
+        a('self.restart','Restart Buddy on its new code once this task finishes. Call it last, after self.commit and self.push, and tell the person Buddy is restarting.',{},[],lambda x,t:self.selfdev.restart(x,t),True,'self_update')
 
     def discover(self,query=''):
         terms=query.lower().split()

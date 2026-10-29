@@ -61,6 +61,13 @@ TOPICS = {
         'step that read information (an email search, a web page, a file) did not work; Buddy’s reply keeps a note about it '
         'and Continue task tries that read again. After a restart Buddy keeps the conversation and '
         'does not repeat interrupted actions on its own.'),
+    'own-code': ('Let Buddy improve itself',
+        'Under Settings → IT setup, turn on Let Buddy change its own code. Then ask for the change in plain words, for example '
+        '“make the Stop button easier to see” or “update the README”. Buddy edits its own program files or documentation on the main branch, runs its tests for code changes, saves the change (code with a new '
+        'version number), publishes it to GitHub with the sign-in already on this computer, and restarts itself after a code change. If other '
+        'conversations are still working, a Restart Buddy button appears instead. In Ask before acting each of these steps is '
+        'confirmed; Just do it runs them without asking. Discuss only changes nothing, and Keep Buddy offline blocks publishing. '
+        'Sign-in keys and git internals stay off limits.'),
     'history': ('History and preferences',
         'Conversations in the sidebar can be searched, reopened, renamed or deleted; everything is stored on this computer. '
         'Things to remember holds preferences you want Buddy to keep. When you use an online assistant, the conversation and '

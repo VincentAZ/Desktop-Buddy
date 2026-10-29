@@ -1,0 +1,13 @@
+Change Buddy's own code or documentation safely on main: read, edit, (raise the version, test,) commit, push, restart.
+
+Use the self.* tools; the checkout path comes from self.status. Buddy always works on the main branch and never switches branches, force-pushes or rewrites history. Steps:
+1. self.status. If enabled is false, stop and tell the person where to turn it on (Settings → IT setup → Let Buddy change its own code). Note running_version and source_version.
+2. Find the code with fs.list and fs.search on the checkout. desktop_buddy/ is the app, tests/ the tests, docs/ the documentation. Everyday UI text lives in ui_widgets.py, ui.py and preferences_ui.py; tools in tools.py; permissions in security.py; the agent loop and its instructions in agent.py; help text in help.py. Read a whole file with fs.read before changing it.
+3. Edit with fs.write, passing expected_sha256 from your read. Keep the existing style: plain words in anything the person sees, no new dependencies, no credential handling, no shortcuts around host policy. Add or adjust a test in tests/ when behaviour changes.
+4. Documentation only (README.md, docs/, assets/, LICENSE): skip to step 6. No version bump and no test run are needed; self.commit reports documentation_only: true.
+   Code changes: raise the version, the same new number in desktop_buddy/__init__.py (__version__) and pyproject.toml (version), for example 0.4.8 → 0.4.9. Mention a visible change in README.md or docs/.
+5. self.check runs every test (about a minute). Fix failures and run it again until passed is true. self.commit refuses a code change without a current passing check; never delete or weaken a test to get there.
+6. self.commit with a message whose first line says what changed for the person in at most 72 characters, optionally followed by details. Everything changed in the checkout goes into this one commit, so keep unrelated edits out of the tree.
+7. self.push. It first brings in newer commits from GitHub (rebasing Buddy's commit on top). If it says a manual merge is needed, tell the person and stop; never force. If it combined newer commits into a code change, run self.check once more before restarting.
+8. Code changes only: self.restart as the very last tool call. Then reply with what changed, the new version (for code), that it was pushed to main on GitHub, and that Buddy is restarting (or that a Restart Buddy button is waiting because other conversations are still working).
+Never: touch .git, publisher_local.py or anything under .buddy; run git or the tests through shell.run; commit without a version bump; claim the tests passed without a self.check result that says so.

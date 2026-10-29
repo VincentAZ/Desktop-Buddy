@@ -24,6 +24,8 @@ ACTION_NAMES={
     'comfyui.status':'Check image creation','comfyui.run':'Create images',
     'comfyui.run_batch':'Create several images','comfyui.cancel':'Stop image creation',
     'discover_tools':'Prepare the next step','Cloud data disclosure':'Use your online assistant',
+    'self.status':'Check Buddy’s own code','self.diff':'Review Buddy’s code changes','self.check':'Test Buddy’s code',
+    'self.commit':'Save a Buddy code change','self.push':'Publish Buddy’s code change','self.restart':'Restart Buddy',
 }
 
 

@@ -147,8 +147,11 @@ def validate_endpoint(url, local=False):
     if not local_url(url) and p.scheme != 'https':
         raise Denied('Remote endpoints must use HTTPS.')
 
+SOURCE_NEVER = {'publisher_local.py'}  # The publisher's Google client: never readable, writable or committed.
+
+
 class Policy:
-    def __init__(self, workspace, mode='plan', local_only=True, approve=None, protected=()):
+    def __init__(self, workspace, mode='plan', local_only=True, approve=None, protected=(), source_root=None):
         if mode not in ('plan', 'execute', 'yolo'):
             raise ValueError('Unknown task mode.')
         self.workspace = Path(workspace).resolve()
@@ -156,6 +159,9 @@ class Policy:
         self.local_only = local_only
         self.approve = approve or (lambda *args: False)
         self.protected = [Path(p).resolve() for p in protected]
+        # Buddy's own checkout, when the person allowed Buddy to change its own code.
+        # Git internals and credential files inside it stay off limits.
+        self.source_root = Path(source_root).resolve() if source_root else None
 
     def request_approval(self, name, detail, token):
         """Ask the person, unless they chose "Just do it" (yolo).
@@ -177,6 +183,9 @@ class Policy:
         sensitive = any(part in {'.ssh','.gnupg','.codex','.hermes','.aws','.azure','keyrings'} for part in p.parts)
         sensitive |= p.name in {'.env','credentials','auth.json','config.json'} and not p.is_relative_to(self.workspace)
         sensitive |= p.name == '.env' or p.name.endswith(('.pem','.key'))
+        if self.source_root and p.is_relative_to(self.source_root):
+            if '.git' in p.relative_to(self.source_root).parts or p.name in SOURCE_NEVER:
+                raise Denied('Buddy’s git internals and sign-in key files are not accessible through model tools. Use the self.* tools for git.')
         if sensitive or any(p == x or p.is_relative_to(x) for x in self.protected):
             raise Denied('Credential/app-state paths are not accessible through model tools.')
         return p
@@ -196,7 +205,7 @@ class Policy:
                 if key in args:
                     p = self.path(args[key], write=mutation)
                     outside |= not p.is_relative_to(self.workspace)
-        if risk in {'command','destructive','desktop_input','launch','http','network','sensitive','compute'} or outside:
+        if risk in {'command','destructive','desktop_input','launch','http','network','sensitive','compute','self_update'} or outside:
             detail = json.dumps(args,ensure_ascii=False,indent=2)
             if not self.request_approval(name, detail, token):
                 raise Denied('User denied this action.')
