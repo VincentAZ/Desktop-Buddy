@@ -160,7 +160,7 @@ button.link:hover, link:hover { color: @buddy_accent_hover; }
 button:focus-visible, entry:focus-within, checkbutton:focus-visible {
     outline: 2px solid @buddy_accent; outline-offset: 2px;
 }
-.sidebar { background: @buddy_sidebar; color: @buddy_text; border-right: 1px solid @buddy_line; padding: 20px 14px; }
+.sidebar { background: @buddy_sidebar; color: @buddy_text; padding: 20px 14px; }
 .brand { font-size: 20px; font-weight: 700; letter-spacing: -.4px; }
 .muted { color: @buddy_muted; }
 .eyebrow { color: @buddy_muted; font-size: 11px; font-weight: 600; letter-spacing: 1.2px; }
@@ -181,6 +181,9 @@ checkbutton, expander { color: @buddy_text; }
 checkbutton check, checkbutton radio { background: @buddy_surface; color: @buddy_text; border-color: @buddy_border; }
 checkbutton check:checked, checkbutton radio:checked { background: @buddy_accent; color: @buddy_on_accent; }
 separator { background: @buddy_line; min-height: 1px; }
+/* The line between the sidebar and the conversation: drag it to resize the sidebar. */
+paned.sidebar-split > separator { background: @buddy_line; min-width: 1px; min-height: 0; }
+paned.sidebar-split > separator:hover { background: @buddy_border; }
 .toolbar { padding: 12px 20px; }
 .conversation { padding: 20px 0; }
 .message { padding: 12px 0; }

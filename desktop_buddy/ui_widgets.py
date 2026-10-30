@@ -20,6 +20,22 @@ INPUT_HEIGHT = 80
 INPUT_MIN = 48
 INPUT_GROW = 240
 MODE_IDS = ['plan', 'execute', 'yolo']
+SIDEBAR_WIDTH = 260
+SIDEBAR_MIN = 180
+SIDEBAR_SHARE = .7
+
+
+def sidebar_width(saved, window_width=0):
+    """The sidebar width to use: the width the person dragged it to, never narrower
+    than SIDEBAR_MIN and, in a known window, never wider than SIDEBAR_SHARE of it so
+    the conversation keeps room. Anything unreadable falls back to the default."""
+    try:
+        width = int(saved)
+    except (TypeError, ValueError):
+        width = SIDEBAR_WIDTH
+    if window_width and window_width > 0:
+        width = min(width, max(SIDEBAR_MIN, int(window_width * SIDEBAR_SHARE)))
+    return max(SIDEBAR_MIN, width)
 
 
 def label(text='', css=None, **kwargs):
@@ -151,6 +167,36 @@ def scroller(child, expand=True, minimum=0):
     return widget
 
 
+def resizable_sidebar(app, root, sidebar):
+    """Let the person drag the line between the sidebar and the conversation to any
+    width they like. The width is remembered; double-clicking the line resets it."""
+    root.set_start_child(sidebar)
+    root.set_resize_start_child(False)
+    root.set_shrink_start_child(False)
+    root.set_position(sidebar_width(app.store.get('sidebar_width', SIDEBAR_WIDTH)))
+    pending = {}
+    def save_width():
+        pending.pop('id', None)
+        position = root.get_position()
+        # A position pinned at the largest allowed value usually means the window
+        # got smaller, not that the person chose it, so it is not remembered.
+        if sidebar.get_visible() and root.get_mapped() and position < root.get_property('max-position'):
+            app.store.set('sidebar_width', sidebar_width(position))
+        return False
+    def position_changed(*_):
+        if 'id' in pending:
+            GLib.source_remove(pending['id'])
+        pending['id'] = GLib.timeout_add(400, save_width)
+    root.connect('notify::position', position_changed)
+    reset = Gtk.GestureClick()
+    def reset_width(_gesture, presses, x, _y):
+        if presses == 2 and sidebar.get_visible() and abs(x - root.get_position()) <= 8:
+            root.set_position(SIDEBAR_WIDTH)
+            app.store.set('sidebar_width', SIDEBAR_WIDTH)
+    reset.connect('pressed', reset_width)
+    root.add_controller(reset)
+
+
 def build_workspace(app, providers, text_view, default_workspace):
     """Native shell with model and appearance controls beside the conversation."""
     header = Gtk.HeaderBar()
@@ -169,16 +215,19 @@ def build_workspace(app, providers, text_view, default_workspace):
     header.pack_end(app.stop_button)
     app.window.set_titlebar(header)
     shell = Gtk.Overlay()
-    root = Gtk.Box()
+    # The sidebar and the conversation share a split view: the line between them
+    # can be dragged to make the sidebar any width.
+    app.sidebar_split = root = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+    root.add_css_class('sidebar-split')
     shell.set_child(root)
     app.window.set_child(shell)
     app.lightbox = Lightbox(app.window)
     shell.add_overlay(app.lightbox.widget)
     app.sidebar = sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-    sidebar.set_size_request(210, -1)
+    sidebar.set_size_request(SIDEBAR_MIN, -1)
     sidebar.add_css_class('sidebar')
     sidebar.set_visible(False)
-    root.append(sidebar)
+    resizable_sidebar(app, root, sidebar)
     sidebar.append(button('New conversation', lambda *_: app.new_conversation(), 'suggested-action', 'list-add-symbolic'))
     app.history_search = Gtk.SearchEntry(placeholder_text='Find a conversation')
     app.history_search.update_property([Gtk.AccessibleProperty.LABEL], ['Search conversations'])
@@ -200,7 +249,9 @@ def build_workspace(app, providers, text_view, default_workspace):
     sidebar.append(app.restart_button)
 
     main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
-    root.append(main)
+    root.set_end_child(main)
+    root.set_resize_end_child(True)
+    root.set_shrink_end_child(False)
     toolbar = Gtk.Box(spacing=8)
     toolbar.add_css_class('toolbar')
     toolbar.append(icon_button('list-add-symbolic', 'New conversation', lambda *_: app.new_conversation()))
