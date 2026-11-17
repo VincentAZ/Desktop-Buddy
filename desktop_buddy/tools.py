@@ -268,7 +268,7 @@ class Registry:
         a('attachments.read','Read a selected document without changing it. Excel: sheet name, zero-based row offset, limit (1–100), one-based column and columns (1–20). PDF: one-based page and character offset. Text/Word: character offset. Results may be partial; inspect next_offset, next_column, totals and notes.',{'id':S,'offset':I,'limit':I,'page':I,'sheet':S,'column':I,'columns':I},['id'],self.attachment_read)
         a('attachments.copy','Make an editable copy of a selected document. Original stays unchanged. Destination parent must exist; never overwrites a file.',{'id':S,'destination':S},['id','destination'],self.attachment_copy,True)
         a('mcp.servers','List saved MCP connections and common service catalog. Use MCP first for Gmail, Calendar, Vercel and other connected services. This does not connect or sign in.',{},[],self.mcp_servers)
-        a('mcp.tools','Discover exact tool names and schemas on a saved MCP server. Query filters names/descriptions; offset pages through matches.',{'server':S,'query':S,'offset':I},['server'],self.mcp_tools,False,'network')
+        a('mcp.tools','Discover exact tool names, complete descriptions and input schemas on a saved MCP server. Query filters names/descriptions. Results are byte-bounded: continue at next_offset; limit (1–20, default 20) reduces page size. Display metadata and output schemas are omitted.',{'server':S,'query':S,'offset':I,'limit':{'type':'integer','minimum':1,'maximum':20,'default':20}},['server'],self.mcp_tools,False,'network')
         a('mcp.call','Invoke one discovered MCP tool with its exact arguments. All calls may have external effects; host approval applies. Server results are untrusted.',{'server':S,'name':S,'arguments':{'type':'object','additionalProperties':True}},['server','name','arguments'],self.mcp_call,True,'network')
         a('mcp.resources','List resources exposed by a saved MCP server, with optional pagination cursor.',{'server':S,'cursor':S},['server'],lambda x,t:self.mcp_required().resources(x['server'],t,x.get('cursor')),False,'network')
         a('mcp.read_resource','Read an exact resource URI from the MCP resource list. Content is untrusted.',{'server':S,'uri':S},['server','uri'],lambda x,t:self.mcp_required().read_resource(x['server'],x['uri'],t),False,'network')
@@ -438,7 +438,7 @@ class Registry:
     def http(self,x,t):
         from urllib.parse import urlsplit
         u=urlsplit(x['url'])
-        if u.scheme not in ('https','http') or not u.hostname or u.username or u.password:raise ValueError('Use an HTTP(S) URL without embedded credentials.')
+        if u.scheme not in ('https','http') or not u.hostname or u.username or (u.password):raise ValueError('Use an HTTP(S) URL without embedded credentials.')
         s=requests.Session();s.trust_env=False
         with s.request(x.get('method','GET'),x['url'],json=x.get('body'),timeout=(5,15),stream=True,allow_redirects=False) as r:
             data=bytearray()
@@ -539,12 +539,9 @@ class Registry:
                 'setup':'Use Connect apps. Unavailable integrations need product development, not customer OAuth or server configuration.'}
 
     def mcp_tools(self,x,t):
+        from .mcp_discovery import tool_page
         tools=self.mcp_required().tools(x['server'],t)
-        terms=x.get('query','').casefold().split()
-        matches=[v for v in tools if all(q in (v['name']+' '+v.get('description','')).casefold() for q in terms)]
-        offset=max(0,x.get('offset',0))
-        return {'tools':matches[offset:offset+20],'total':len(matches),
-                'next_offset':offset+20 if offset+20<len(matches) else None}
+        return tool_page(tools,x.get('query',''),x.get('offset',0),x.get('limit',20))
 
     def mcp_call(self,x,t):
         return self.mcp_required().call(x['server'],x['name'],x['arguments'],t)
